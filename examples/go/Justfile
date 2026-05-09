@@ -13,7 +13,7 @@ kernel      := ".unikraft/build/go-hyperlight_hyperlight-x86_64"
 initrd      := "hello-initrd.cpio"
 memory      := "16Mi"
 image       := "go-hyperlight"
-ghcr_kernel := "ghcr.io/danbugs/hyperlight-unikraft/go-kernel:latest"
+ghcr_kernel := "ghcr.io/hyperlight-dev/hyperlight-unikraft/go-kernel:latest"
 
 # Run the example
 run:

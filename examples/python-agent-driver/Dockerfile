@@ -6,7 +6,7 @@
 # installs an FC-aware dispatch callback that handles every
 # subsequent host->guest call without re-running main().
 
-ARG BASE=ghcr.io/danbugs/hyperlight-unikraft/python-base:latest
+ARG BASE=ghcr.io/hyperlight-dev/hyperlight-unikraft/python-base:latest
 
 # Stage 1: Python deps (same as python-agent).
 FROM python:3.12-slim AS deps

@@ -8,7 +8,7 @@
 # Then:
 #   docker build --build-arg BASE=python-base --target cpio -t python-cpio .
 
-ARG BASE=ghcr.io/danbugs/hyperlight-unikraft/python-base:latest
+ARG BASE=ghcr.io/hyperlight-dev/hyperlight-unikraft/python-base:latest
 FROM ${BASE} AS rootfs
 COPY hello.py /hello.py
 

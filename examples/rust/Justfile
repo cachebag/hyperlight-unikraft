@@ -13,7 +13,7 @@ kernel      := ".unikraft/build/rust-hyperlight_hyperlight-x86_64"
 initrd      := "hello-initrd.cpio"
 memory      := "16Mi"
 image       := "rust-hyperlight"
-ghcr_kernel := "ghcr.io/danbugs/hyperlight-unikraft/rust-kernel:latest"
+ghcr_kernel := "ghcr.io/hyperlight-dev/hyperlight-unikraft/rust-kernel:latest"
 
 # Run the example
 run:

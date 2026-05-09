@@ -1,4 +1,4 @@
-ARG BASE=ghcr.io/danbugs/hyperlight-unikraft/nodejs-base:latest
+ARG BASE=ghcr.io/hyperlight-dev/hyperlight-unikraft/nodejs-base:latest
 FROM ${BASE} AS rootfs
 COPY hello.js /app/hello.js
 

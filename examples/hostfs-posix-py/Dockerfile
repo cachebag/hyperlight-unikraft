@@ -1,4 +1,4 @@
-ARG BASE=ghcr.io/danbugs/hyperlight-unikraft/python-base:latest
+ARG BASE=ghcr.io/hyperlight-dev/hyperlight-unikraft/python-base:latest
 FROM ${BASE} AS rootfs
 COPY hostfs_demo.py /hostfs_demo.py
 

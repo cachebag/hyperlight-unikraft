@@ -13,7 +13,7 @@ kernel      := ".unikraft/build/dotnet-hyperlight_hyperlight-x86_64"
 initrd      := "dotnet-initrd.cpio"
 memory      := "16Mi"
 image       := "dotnet-hyperlight"
-ghcr_kernel := "ghcr.io/danbugs/hyperlight-unikraft/dotnet-kernel:latest"
+ghcr_kernel := "ghcr.io/hyperlight-dev/hyperlight-unikraft/dotnet-kernel:latest"
 
 # Run the example
 run:

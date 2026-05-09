@@ -13,7 +13,7 @@ kernel      := ".unikraft/build/nodejs-hyperlight_hyperlight-x86_64"
 initrd      := "node-initrd.cpio"
 memory      := "512Mi"
 image       := "nodejs-hyperlight"
-ghcr_kernel := "ghcr.io/danbugs/hyperlight-unikraft/nodejs-kernel:latest"
+ghcr_kernel := "ghcr.io/hyperlight-dev/hyperlight-unikraft/nodejs-kernel:latest"
 
 # Run the example
 run:

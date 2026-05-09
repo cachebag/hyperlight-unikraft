@@ -1,4 +1,4 @@
-ARG BASE=ghcr.io/danbugs/hyperlight-unikraft/shell-base:latest
+ARG BASE=ghcr.io/hyperlight-dev/hyperlight-unikraft/shell-base:latest
 FROM ${BASE} AS rootfs
 COPY demo.sh /demo.sh
 

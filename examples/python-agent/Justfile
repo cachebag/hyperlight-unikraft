@@ -18,7 +18,7 @@ kernel      := ".unikraft/build/python-agent-hyperlight_hyperlight-x86_64"
 initrd      := "python-agent-initrd.cpio"
 memory      := "1Gi"
 image       := "python-agent-hyperlight"
-ghcr_kernel := "ghcr.io/danbugs/hyperlight-unikraft/python-agent-kernel:latest"
+ghcr_kernel := "ghcr.io/hyperlight-dev/hyperlight-unikraft/python-agent-kernel:latest"
 mount_dir   := "./work"
 
 [unix]

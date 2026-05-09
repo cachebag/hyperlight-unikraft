@@ -344,9 +344,9 @@ pub fn discover_source_artifacts(dir: &Path) -> Result<(PathBuf, PathBuf)> {
 /// Both images are FROM-scratch payloads: kernel image has a single /kernel,
 /// initrd image has a single /initrd.cpio.
 pub const GHCR_KERNEL_IMAGE: &str =
-    "ghcr.io/danbugs/hyperlight-unikraft/python-agent-driver-kernel:latest";
+    "ghcr.io/hyperlight-dev/hyperlight-unikraft/python-agent-driver-kernel:latest";
 pub const GHCR_INITRD_IMAGE: &str =
-    "ghcr.io/danbugs/hyperlight-unikraft/python-agent-driver-initrd:latest";
+    "ghcr.io/hyperlight-dev/hyperlight-unikraft/python-agent-driver-initrd:latest";
 
 /// Pull a single file out of an OCI image hosted on GHCR. Uses whichever
 /// of `docker` / `podman` is on `$PATH`. The published images are

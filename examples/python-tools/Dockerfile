@@ -1,4 +1,4 @@
-ARG BASE=ghcr.io/danbugs/hyperlight-unikraft/python-base:latest
+ARG BASE=ghcr.io/hyperlight-dev/hyperlight-unikraft/python-base:latest
 FROM ${BASE} AS rootfs
 COPY test_tools.py /test_tools.py
 # hyperlight.py is the guest-side SDK test_tools.py imports. Python's

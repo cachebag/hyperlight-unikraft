@@ -8,7 +8,7 @@
 
 # BASE is resolved pre-FROM so the classic (non-BuildKit) docker
 # frontend used by DOCKER_BUILDKIT=0 handles the substitution.
-ARG BASE=ghcr.io/danbugs/hyperlight-unikraft/python-base:latest
+ARG BASE=ghcr.io/hyperlight-dev/hyperlight-unikraft/python-base:latest
 
 # Stage 1: resolve + install pip deps into a target dir, then trim
 # everything the guest doesn't need (pip/setuptools/wheel metadata,

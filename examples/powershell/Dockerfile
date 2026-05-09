@@ -1,4 +1,4 @@
-ARG BASE=ghcr.io/danbugs/hyperlight-unikraft/powershell-base:latest
+ARG BASE=ghcr.io/hyperlight-dev/hyperlight-unikraft/powershell-base:latest
 FROM ${BASE} AS rootfs
 COPY hello.ps1 /scripts/hello.ps1
 

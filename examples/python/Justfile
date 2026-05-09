@@ -13,7 +13,7 @@ kernel      := ".unikraft/build/python-hyperlight_hyperlight-x86_64"
 initrd      := "initrd.cpio"
 memory      := "96Mi"
 image       := "python-hyperlight"
-ghcr_kernel := "ghcr.io/danbugs/hyperlight-unikraft/python-kernel:latest"
+ghcr_kernel := "ghcr.io/hyperlight-dev/hyperlight-unikraft/python-kernel:latest"
 
 # Run the example
 run:

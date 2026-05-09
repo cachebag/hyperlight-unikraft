@@ -13,7 +13,7 @@ kernel      := ".unikraft/build/powershell-hyperlight_hyperlight-x86_64"
 initrd      := "powershell-initrd.cpio"
 memory      := "1Gi"
 image       := "powershell-hyperlight"
-ghcr_kernel := "ghcr.io/danbugs/hyperlight-unikraft/powershell-kernel:latest"
+ghcr_kernel := "ghcr.io/hyperlight-dev/hyperlight-unikraft/powershell-kernel:latest"
 
 # Run the example
 run:
