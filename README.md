@@ -83,7 +83,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 cargo install just
 
 # 2. kraft-hyperlight (builds Unikraft kernels)
-git clone --branch hyperlight-platform https://github.com/unikraft/kraftkit.git
+git clone --branch hyperlight-platform https://github.com/danbugs/kraftkit.git
 cd kraftkit && go build -o kraft-hyperlight ./cmd/kraft
 sudo mv kraft-hyperlight /usr/local/bin/ && cd ..
 
@@ -204,7 +204,7 @@ Every path the guest sends is resolved relative to `HOST_DIR` and any
 escape (via `..` or symlinks) is rejected host-side.
 
 Known limitation: `opendir`/`readdir` don't work yet (see
-[lib/hostfs/README.md](https://github.com/unikraft/unikraft/blob/hyperlight-platform/lib/hostfs/README.md)). Stat and enumerate known paths instead.
+[lib/hostfs/README.md](https://github.com/unikraft/unikraft/blob/plat-hyperlight/lib/hostfs/README.md)). Stat and enumerate known paths instead.
 
 ### Running ad-hoc code (no initrd rebuild)
 
