@@ -1424,7 +1424,7 @@ impl Sandbox {
     /// a 2.5 GB snapshot — enough to double the whole `pyhl run` wall
     /// time on simple scripts.
     pub fn from_snapshot_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        Self::from_snapshot_file_with(path, &[])
+        Self::from_snapshot_file_full(path, &[], None)
     }
 
     /// Load a previously-persisted snapshot and register a
@@ -1439,6 +1439,26 @@ impl Sandbox {
     /// fixed at setup time because it lives in the snapshot's memory
     /// image.
     pub fn from_snapshot_file_with<P: AsRef<Path>>(path: P, preopens: &[Preopen]) -> Result<Self> {
+        Self::from_snapshot_file_full(path, preopens, None)
+    }
+
+    /// Load a snapshot with an initrd file re-mapped at the standard
+    /// guest VA (0xC000_0000). Required when the snapshot was taken
+    /// from a cpiovfs-backed guest whose VFS nodes point into the
+    /// initrd region.
+    pub fn from_snapshot_file_with_initrd<P: AsRef<Path>, I: AsRef<Path>>(
+        path: P,
+        preopens: &[Preopen],
+        initrd: I,
+    ) -> Result<Self> {
+        Self::from_snapshot_file_full(path, preopens, Some(initrd.as_ref().to_path_buf()))
+    }
+
+    fn from_snapshot_file_full<P: AsRef<Path>>(
+        path: P,
+        preopens: &[Preopen],
+        initrd: Option<std::path::PathBuf>,
+    ) -> Result<Self> {
         let loaded = Snapshot::from_file_unchecked(path.as_ref())?;
         let arc = Arc::new(loaded);
 
@@ -1453,13 +1473,18 @@ impl Sandbox {
             tools_ref.dispatch(&payload)
         })?;
 
-        let inner = MultiUseSandbox::from_snapshot(arc.clone(), host_funcs, None)?;
+        let mut inner = MultiUseSandbox::from_snapshot(arc.clone(), host_funcs, None)?;
+
+        const INITRD_MAP_BASE: u64 = 0xC000_0000;
+        if let Some(ref initrd_path) = initrd {
+            inner.map_file_cow(initrd_path, INITRD_MAP_BASE, Some("initrd"))?;
+        }
 
         Ok(Self {
             inner,
             snapshot: Some(arc),
-            file_mapping_path: None,
-            file_mapping_base: 0,
+            file_mapping_path: initrd,
+            file_mapping_base: INITRD_MAP_BASE,
             exit_code,
         })
     }

@@ -464,8 +464,12 @@ fn cmd_run(args: RunArgs) -> Result<()> {
         .map(|m| parse_mount(m))
         .collect::<Result<_>>()?;
 
+    let initrd = home.join(INITRD_FILE);
+
     let t_load = Instant::now();
-    let mut sandbox = if run_preopens.is_empty() {
+    let mut sandbox = if initrd.is_file() {
+        Sandbox::from_snapshot_file_with_initrd(&snapshot, &run_preopens, &initrd)?
+    } else if run_preopens.is_empty() {
         Sandbox::from_snapshot_file(&snapshot)?
     } else {
         Sandbox::from_snapshot_file_with(&snapshot, &run_preopens)?
