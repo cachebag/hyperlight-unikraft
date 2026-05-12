@@ -1578,11 +1578,8 @@ fn sparsify_snapshot(path: &Path) -> Result<()> {
     drop(mmap);
 
     if punched > 0 {
-        eprintln!(
-            "  sparsified: punched {} zero pages ({} MiB saved on disk)",
-            punched,
-            punched * 4 / 1024
-        );
+        let disk_mib = (len as u64 - punched * PAGE as u64) / 1024 / 1024;
+        eprintln!("  sparsified: {disk_mib} MiB on disk (punched {punched} zero pages)",);
     }
 
     Ok(())
@@ -1669,11 +1666,8 @@ fn sparsify_snapshot(path: &Path) -> Result<()> {
     drop(mmap);
 
     if punched > 0 {
-        eprintln!(
-            "  sparsified: punched {} zero pages ({} MiB saved on disk)",
-            punched,
-            punched * 4 / 1024
-        );
+        let disk_mib = (len as u64 - punched * PAGE as u64) / 1024 / 1024;
+        eprintln!("  sparsified: {disk_mib} MiB on disk (punched {punched} zero pages)",);
     }
 
     Ok(())
