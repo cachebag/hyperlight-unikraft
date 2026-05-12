@@ -748,6 +748,7 @@ jobs:
     if: always()
     needs: [build-example, runtime-test, package-images-for-windows, runtime-test-windows, pyhl-snapshot-test]
     runs-on: ubuntu-latest
+    permissions: {}
     steps:
       - run: |
           results=("${{ needs.build-example.result }}" "${{ needs.runtime-test.result }}" "${{ needs.package-images-for-windows.result }}" "${{ needs.runtime-test-windows.result }}" "${{ needs.pyhl-snapshot-test.result }}")
