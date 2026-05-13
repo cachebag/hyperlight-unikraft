@@ -16,19 +16,19 @@ image       := "networking-py-hyperlight"
 
 # Run HTTP GET test (raw sockets)
 run-get:
-    hyperlight-unikraft {{kernel}} --initrd {{initrd}} --memory {{memory}} -- /http_get.py
+    hyperlight-unikraft {{kernel}} --initrd {{initrd}} --memory {{memory}} --net -- /http_get.py
 
 # Run HTTP GET test (urllib — high-level stdlib)
 run-urllib:
-    hyperlight-unikraft {{kernel}} --initrd {{initrd}} --memory {{memory}} -- /urllib_get.py
+    hyperlight-unikraft {{kernel}} --initrd {{initrd}} --memory {{memory}} --net -- /urllib_get.py
 
 # Run HTTPS (TLS) test
 run-https:
-    hyperlight-unikraft {{kernel}} --initrd {{initrd}} --memory {{memory}} -- /https_test.py
+    hyperlight-unikraft {{kernel}} --initrd {{initrd}} --memory {{memory}} --net -- /https_test.py
 
 # Run echo server
 run-echo:
-    hyperlight-unikraft {{kernel}} --initrd {{initrd}} --memory {{memory}} -- /echo_server.py
+    hyperlight-unikraft {{kernel}} --initrd {{initrd}} --memory {{memory}} --net -- /echo_server.py
 
 # Build rootfs via Docker (cross-platform)
 rootfs:
