@@ -88,11 +88,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.1'
+          cache: false
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: host -> target
+
+      - name: Cache kraft-hyperlight
+        id: kraft-cache
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/bin/kraft-hyperlight
+          key: kraft-hyperlight-linux-${{ hashFiles('.github/workflows/publish-examples.yml') }}
+
       - name: Install tools
         run: |
-          # Install kraft-hyperlight
-          git clone --branch hyperlight-platform --depth 1 https://github.com/danbugs/kraftkit.git /tmp/kraftkit
-          cd /tmp/kraftkit && go build -o /usr/local/bin/kraft-hyperlight ./cmd/kraft
+          # Install kraft-hyperlight (if not cached)
+          if [ ! -f /usr/local/bin/kraft-hyperlight ]; then
+            git clone --branch hyperlight-platform --depth 1 https://github.com/danbugs/kraftkit.git /tmp/kraftkit
+            cd /tmp/kraftkit && go build -o /usr/local/bin/kraft-hyperlight ./cmd/kraft
+          fi
           # Install hyperlight-unikraft
           cd ${{ github.workspace }}/host && cargo build --release
           sudo cp target/release/hyperlight-unikraft /usr/local/bin/

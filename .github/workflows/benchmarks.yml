@@ -40,15 +40,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Go (for kraft-hyperlight)
-        run: |
-          curl -sL https://go.dev/dl/go1.25.1.linux-amd64.tar.gz | sudo tar -C /usr/local -xz
-          echo "/usr/local/go/bin" >> $GITHUB_PATH
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.1'
+          cache: false
 
       - name: Install just
         uses: extractions/setup-just@v2
 
+      - name: Cache kraft-hyperlight
+        id: kraft-cache
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/bin/kraft-hyperlight
+          key: kraft-hyperlight-linux-${{ hashFiles('.github/workflows/benchmarks.yml') }}
+
       - name: Build kraft-hyperlight
+        if: steps.kraft-cache.outputs.cache-hit != 'true'
         run: |
           git clone --branch hyperlight-platform --depth 1 \
               https://github.com/danbugs/kraftkit.git /tmp/kraftkit
@@ -115,6 +123,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: host -> target
 
       - name: Enable KVM permissions
         run: |
@@ -313,14 +325,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: host -> target
+
       - name: Install pyhl
         shell: pwsh
         run: |
-          cargo install --git https://github.com/${{ github.repository }} `
-            --branch ${{ github.head_ref || github.ref_name }} `
-            hyperlight-unikraft-host `
-            --bin pyhl `
-            --locked --force
+          cd host
+          cargo build --release --bin pyhl
+          Copy-Item target\release\pyhl.exe $env:USERPROFILE\.cargo\bin\ -Force
 
       - name: Download prebuilt image
         uses: actions/download-artifact@v4

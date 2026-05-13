@@ -37,6 +37,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: host -> target
+
       - name: Install Rust components for pinned toolchain
         # The repo pins 1.89.0 via rust-toolchain.toml at the repo root.
         # cargo fmt / clippy use the pinned channel, so install their
