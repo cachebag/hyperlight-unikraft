@@ -296,7 +296,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           benchmark-data-dir-path: dev/bench/linux
           auto-push: ${{ github.event_name == 'push' }}
-          comment-on-alert: true
+          comment-always: true
           alert-threshold: '130%'
 
   # ------------------------------------------------------------------
@@ -499,7 +499,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           benchmark-data-dir-path: dev/bench/windows
           auto-push: ${{ github.event_name == 'push' }}
-          comment-on-alert: true
+          comment-always: true
           alert-threshold: '130%'
 
   all-checks-passed:
