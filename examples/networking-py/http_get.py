@@ -1,21 +1,21 @@
 """Simple HTTP GET test for Hyperlight networking.
 
 Uses raw sockets to avoid DNS dependency for initial testing.
-Connects to httpbin.org (54.144.44.106) and issues a GET /get.
+Connects to example.com and issues a GET /.
 """
 import socket
 import sys
 
-HOST = "54.144.44.106"
+HOST = "172.66.147.243"
 PORT = 80
-PATH = "/get"
+PATH = "/"
 
 print(f"Connecting to {HOST}:{PORT}...")
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 sock.connect((HOST, PORT))
 print("Connected!")
 
-request = f"GET {PATH} HTTP/1.1\r\nHost: httpbin.org\r\nConnection: close\r\n\r\n"
+request = f"GET {PATH} HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n"
 sock.sendall(request.encode())
 print("Request sent, waiting for response...")
 
