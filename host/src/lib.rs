@@ -67,6 +67,7 @@ use hyperlight_host::sandbox::SandboxConfiguration;
 use hyperlight_host::{GuestBinary, HostFunctions, MultiUseSandbox, UninitializedSandbox};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -791,6 +792,25 @@ fn build_tools(
     Ok(Some(registry))
 }
 
+/// Register internal tools (`__hl_exit`, `__hl_sleep`) on a tool registry.
+/// These are plumbing used by the guest driver (`hl_pydriver.c`) and are
+/// always present regardless of user-supplied tools or preopens.
+fn register_internal_tools(tools: &mut ToolRegistry, exit_code: &Arc<AtomicI32>) {
+    let ec = exit_code.clone();
+    tools.register("__hl_exit", move |args| {
+        let code = args["code"].as_i64().unwrap_or(1) as i32;
+        ec.store(code, Ordering::Relaxed);
+        Ok(serde_json::json!({}))
+    });
+    tools.register("__hl_sleep", |args| {
+        let ns = args["ns"].as_u64().unwrap_or(0);
+        if ns > 0 {
+            std::thread::sleep(std::time::Duration::from_nanos(ns));
+        }
+        Ok(serde_json::json!({}))
+    });
+}
+
 /// Routes incoming fs_* tool calls to the matching `FsSandbox` by
 /// matching the guest-supplied path against each preopen's guest path.
 #[derive(Clone)]
@@ -1041,6 +1061,7 @@ pub struct Sandbox {
     /// Snapshot restore unmaps all non-snapshot regions.
     file_mapping_path: Option<std::path::PathBuf>,
     file_mapping_base: u64,
+    exit_code: Arc<AtomicI32>,
 }
 
 /// Where the initrd comes from — either a file (zero-copy `map_file_cow`)
@@ -1213,17 +1234,16 @@ impl Sandbox {
 
         let mut usbox = UninitializedSandbox::new(env, Some(config.sandbox_config()))?;
 
-        let tools = build_tools(tools, preopens)?;
+        let exit_code = Arc::new(AtomicI32::new(0));
+        let mut tools = build_tools(tools, preopens)?.unwrap_or_default();
+        register_internal_tools(&mut tools, &exit_code);
+        let tools = Arc::new(tools);
+        let tools_ref = tools.clone();
+        usbox.register_host_function("__dispatch", move |payload: Vec<u8>| -> Vec<u8> {
+            tools_ref.dispatch(&payload)
+        })?;
 
-        if let Some(tools) = tools {
-            let tools = Arc::new(tools);
-            let tools_ref = tools.clone();
-            usbox.register_host_function("__dispatch", move |payload: Vec<u8>| -> Vec<u8> {
-                tools_ref.dispatch(&payload)
-            })?;
-        }
-
-        Self::finish_evolve(usbox, None, 0)
+        Self::finish_evolve(usbox, None, 0, exit_code)
     }
 
     /// Low-level: boot with a zero-copy mapped initrd file. Prefer the builder.
@@ -1263,24 +1283,23 @@ impl Sandbox {
             usbox.map_file_cow(path, INITRD_MAP_BASE, Some("initrd"))?;
         }
 
-        let tools = build_tools(tools, preopens)?;
+        let exit_code = Arc::new(AtomicI32::new(0));
+        let mut tools = build_tools(tools, preopens)?.unwrap_or_default();
+        register_internal_tools(&mut tools, &exit_code);
+        let tools = Arc::new(tools);
+        let tools_ref = tools.clone();
+        usbox.register_host_function("__dispatch", move |payload: Vec<u8>| -> Vec<u8> {
+            tools_ref.dispatch(&payload)
+        })?;
 
-        // Register tool dispatch if needed
-        if let Some(tools) = tools {
-            let tools = Arc::new(tools);
-            let tools_ref = tools.clone();
-            usbox.register_host_function("__dispatch", move |payload: Vec<u8>| -> Vec<u8> {
-                tools_ref.dispatch(&payload)
-            })?;
-        }
-
-        Self::finish_evolve(usbox, initrd_path.map(|p| p.to_path_buf()), INITRD_MAP_BASE)
+        Self::finish_evolve(usbox, initrd_path.map(|p| p.to_path_buf()), INITRD_MAP_BASE, exit_code)
     }
 
     fn finish_evolve(
         usbox: UninitializedSandbox,
         file_mapping_path: Option<std::path::PathBuf>,
         file_mapping_base: u64,
+        exit_code: Arc<AtomicI32>,
     ) -> Result<Self> {
         let mut inner = usbox.evolve()?;
         let snapshot = inner.snapshot().ok();
@@ -1289,6 +1308,7 @@ impl Sandbox {
             snapshot,
             file_mapping_path,
             file_mapping_base,
+            exit_code,
         })
     }
 
@@ -1337,6 +1357,18 @@ impl Sandbox {
         Args: hyperlight_host::func::ParameterTuple,
     {
         Ok(self.inner.call(func_name, args)?)
+    }
+
+    /// Read the exit code reported by the guest via `__hl_exit`.
+    /// Defaults to 0 (success) if the guest never called it.
+    pub fn last_exit_code(&self) -> i32 {
+        self.exit_code.load(Ordering::Relaxed)
+    }
+
+    /// Reset the stored exit code to 0. Call before each guest
+    /// invocation so a previous non-zero code doesn't leak.
+    pub fn reset_exit_code(&self) {
+        self.exit_code.store(0, Ordering::Relaxed);
     }
 
     /// Take a new snapshot of the current guest state.
@@ -1405,21 +1437,16 @@ impl Sandbox {
         let loaded = Snapshot::from_file_unchecked(path.as_ref())?;
         let arc = Arc::new(loaded);
 
+        let exit_code = Arc::new(AtomicI32::new(0));
+        let mut tools = build_tools(None, preopens)?.unwrap_or_default();
+        register_internal_tools(&mut tools, &exit_code);
+        let tools = Arc::new(tools);
+        let tools_ref = tools.clone();
+
         let mut host_funcs = HostFunctions::default();
-        if !preopens.is_empty() {
-            if let Some(tools) = build_tools(None, preopens)? {
-                let tools = Arc::new(tools);
-                let tools_ref = tools.clone();
-                host_funcs
-                    .register_host_function("__dispatch", move |payload: Vec<u8>| -> Vec<u8> {
-                        tools_ref.dispatch(&payload)
-                    })?;
-            }
-        } else {
-            host_funcs.register_host_function("__dispatch", |_payload: Vec<u8>| -> Vec<u8> {
-                Vec::new()
-            })?;
-        }
+        host_funcs.register_host_function("__dispatch", move |payload: Vec<u8>| -> Vec<u8> {
+            tools_ref.dispatch(&payload)
+        })?;
 
         let inner = MultiUseSandbox::from_snapshot(arc.clone(), host_funcs, None)?;
 
@@ -1428,6 +1455,7 @@ impl Sandbox {
             snapshot: Some(arc),
             file_mapping_path: None,
             file_mapping_base: 0,
+            exit_code,
         })
     }
 }

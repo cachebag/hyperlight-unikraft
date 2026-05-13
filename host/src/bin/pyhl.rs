@@ -504,13 +504,18 @@ fn cmd_run(args: RunArgs) -> Result<()> {
             full
         };
 
+        sandbox.reset_exit_code();
         let t_call = Instant::now();
         let _: () = sandbox.call_named("run", payload)?;
         let call_ms = t_call.elapsed().as_secs_f64() * 1000.0;
+        let exit_code = sandbox.last_exit_code();
         if args.verbose {
             eprintln!(
-                "[pyhl] run {i}/{total} restore={restore_ms:.1}ms call={call_ms:.1}ms (hermetic)"
+                "[pyhl] run {i}/{total} restore={restore_ms:.1}ms call={call_ms:.1}ms exit={exit_code} (hermetic)"
             );
+        }
+        if exit_code != 0 {
+            std::process::exit(exit_code);
         }
     }
 

@@ -197,6 +197,7 @@ pub fn install(opts: &InstallOptions<'_>) -> Result<InstallReport> {
 pub struct RunTiming {
     pub restore_ms: f64,
     pub call_ms: f64,
+    pub exit_code: i32,
 }
 
 /// A pyhl runtime backed by a warmed-up snapshot. Cheap to keep around;
@@ -244,10 +245,12 @@ impl Runtime {
             t.restore_ms = tr.elapsed().as_secs_f64() * 1000.0;
         }
         self.first_run = false;
+        self.sandbox.reset_exit_code();
 
         let tc = Instant::now();
         let _: () = self.sandbox.call_named("run", code.to_string())?;
         t.call_ms = tc.elapsed().as_secs_f64() * 1000.0;
+        t.exit_code = self.sandbox.last_exit_code();
         Ok(t)
     }
 
