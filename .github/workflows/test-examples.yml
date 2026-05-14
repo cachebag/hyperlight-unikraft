@@ -237,6 +237,10 @@ jobs:
             memory: "512Mi"
             args: "--net -- /urllib_get.py"
             expect: "SUCCESS: urllib GET worked!"
+          - example: networking-py
+            memory: "512Mi"
+            args: "--port 8080 -- /echo_server_test.py"
+            expect: "SUCCESS: bind\\+listen on port 8080 allowed"
     steps:
       - uses: actions/checkout@v4
 
@@ -569,6 +573,10 @@ jobs:
             memory: "512Mi"
             args: "--net -- /urllib_get.py"
             expect: "SUCCESS: urllib GET worked!"
+          - example: networking-py
+            memory: "512Mi"
+            args: "--port 8080 -- /echo_server_test.py"
+            expect: "SUCCESS: bind\\+listen on port 8080 allowed"
     steps:
       - uses: actions/checkout@v4
 

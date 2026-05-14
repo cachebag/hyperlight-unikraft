@@ -9,6 +9,7 @@ COPY http_get.py /http_get.py
 COPY echo_server.py /echo_server.py
 COPY urllib_get.py /urllib_get.py
 COPY https_test.py /https_test.py
+COPY echo_server_test.py /echo_server_test.py
 
 # --- CPIO rootfs builder ---
 FROM alpine:3.20 AS cpio
