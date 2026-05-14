@@ -8,7 +8,7 @@
 
 use anyhow::Result;
 use clap::Parser;
-use hyperlight_unikraft::{parse_memory, AllowList, NetworkPolicy, Preopen, Sandbox};
+use hyperlight_unikraft::{parse_memory, AllowList, BlockList, NetworkPolicy, Preopen, Sandbox};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -65,8 +65,22 @@ struct Args {
     /// Restrict guest networking to the listed hosts/IPs.
     /// Implies --net. Hostnames are resolved at sandbox creation time.
     /// Repeatable: `--net-allow api.github.com --net-allow 10.0.0.1`.
-    #[arg(long = "net-allow", value_name = "HOST_OR_IP")]
+    #[arg(
+        long = "net-allow",
+        value_name = "HOST_OR_IP",
+        conflicts_with = "net_block"
+    )]
     net_allow: Vec<String>,
+
+    /// Block the listed hosts/IPs; all other destinations are allowed.
+    /// Implies --net. Hostnames are resolved at sandbox creation time.
+    /// Repeatable: `--net-block evil.com --net-block 10.0.0.1`.
+    #[arg(
+        long = "net-block",
+        value_name = "HOST_OR_IP",
+        conflicts_with = "net_allow"
+    )]
+    net_block: Vec<String>,
 
     /// Run the application N additional times via snapshot/restore + call.
     /// The first run always happens. --repeat=2 means 3 total runs.
@@ -166,6 +180,10 @@ fn main() -> Result<()> {
     let network = if !args.net_allow.is_empty() {
         Some(NetworkPolicy::AllowList(AllowList::from_hosts(
             &args.net_allow,
+        )?))
+    } else if !args.net_block.is_empty() {
+        Some(NetworkPolicy::BlockList(BlockList::from_hosts(
+            &args.net_block,
         )?))
     } else if args.net {
         Some(NetworkPolicy::AllowAll)

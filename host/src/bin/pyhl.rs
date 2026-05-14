@@ -26,7 +26,7 @@ use hyperlight_unikraft::pyhl::{
     copy_replace, discover_source_artifacts, extract_from_ghcr, GHCR_INITRD_IMAGE,
     GHCR_KERNEL_IMAGE,
 };
-use hyperlight_unikraft::{AllowList, NetworkPolicy, Preopen, Sandbox};
+use hyperlight_unikraft::{AllowList, BlockList, NetworkPolicy, Preopen, Sandbox};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -37,10 +37,18 @@ fn parse_mount(spec: &str) -> Result<Preopen> {
     Preopen::parse_cli(spec).map_err(|e| anyhow!("invalid --mount {:?}: {}", spec, e))
 }
 
-fn build_network_policy(net: bool, net_allow: &[String]) -> Result<Option<NetworkPolicy>> {
+fn build_network_policy(
+    net: bool,
+    net_allow: &[String],
+    net_block: &[String],
+) -> Result<Option<NetworkPolicy>> {
     if !net_allow.is_empty() {
         Ok(Some(NetworkPolicy::AllowList(AllowList::from_hosts(
             net_allow,
+        )?)))
+    } else if !net_block.is_empty() {
+        Ok(Some(NetworkPolicy::BlockList(BlockList::from_hosts(
+            net_block,
         )?)))
     } else if net {
         Ok(Some(NetworkPolicy::AllowAll))
@@ -164,8 +172,21 @@ struct SetupArgs {
 
     /// Restrict guest networking to the listed hosts/IPs.
     /// Implies --net. Repeatable.
-    #[arg(long = "net-allow", value_name = "HOST_OR_IP")]
+    #[arg(
+        long = "net-allow",
+        value_name = "HOST_OR_IP",
+        conflicts_with = "net_block"
+    )]
     net_allow: Vec<String>,
+
+    /// Block the listed hosts/IPs; all other destinations are allowed.
+    /// Implies --net. Repeatable.
+    #[arg(
+        long = "net-block",
+        value_name = "HOST_OR_IP",
+        conflicts_with = "net_allow"
+    )]
+    net_block: Vec<String>,
 }
 
 #[derive(Args)]
@@ -199,8 +220,21 @@ struct RunArgs {
 
     /// Restrict guest networking to the listed hosts/IPs.
     /// Implies --net. Repeatable.
-    #[arg(long = "net-allow", value_name = "HOST_OR_IP")]
+    #[arg(
+        long = "net-allow",
+        value_name = "HOST_OR_IP",
+        conflicts_with = "net_block"
+    )]
     net_allow: Vec<String>,
+
+    /// Block the listed hosts/IPs; all other destinations are allowed.
+    /// Implies --net. Repeatable.
+    #[arg(
+        long = "net-block",
+        value_name = "HOST_OR_IP",
+        conflicts_with = "net_allow"
+    )]
+    net_block: Vec<String>,
 
     /// Print evolve/warmup/per-run timing to stderr. Off by default so the
     /// user's script output is clean.
@@ -359,7 +393,7 @@ fn cmd_setup(args: SetupArgs) -> Result<()> {
         .iter()
         .map(|m| parse_mount(m))
         .collect::<Result<_>>()?;
-    let network = build_network_policy(args.net, &args.net_allow)?;
+    let network = build_network_policy(args.net, &args.net_allow, &args.net_block)?;
 
     eprintln!("pyhl: warming up Python and persisting snapshot…");
     let t_warm = Instant::now();
@@ -497,7 +531,7 @@ fn cmd_run(args: RunArgs) -> Result<()> {
         .iter()
         .map(|m| parse_mount(m))
         .collect::<Result<_>>()?;
-    let network = build_network_policy(args.net, &args.net_allow)?;
+    let network = build_network_policy(args.net, &args.net_allow, &args.net_block)?;
 
     let initrd = home.join(INITRD_FILE);
 

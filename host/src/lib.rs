@@ -168,6 +168,8 @@ pub enum NetworkPolicy {
     AllowAll,
     /// Only connections to the listed destinations are permitted.
     AllowList(AllowList),
+    /// All connections are allowed *except* to the listed destinations.
+    BlockList(BlockList),
 }
 
 /// A set of allowed network destinations.
@@ -234,17 +236,89 @@ impl AllowList {
     }
 }
 
+/// A set of blocked network destinations.
+///
+/// Like [`AllowList`], stores both literal IPs and hostnames. At check
+/// time, hostnames are re-resolved so the policy tracks DNS changes.
+#[derive(Clone, Debug)]
+pub struct BlockList {
+    blocked_ips: HashSet<IpAddr>,
+    hostnames: Vec<String>,
+}
+
+impl BlockList {
+    /// Build a blocklist from a mixed set of hostnames and IP literals.
+    ///
+    /// Hostnames are verified to be resolvable at construction time
+    /// (fail-closed). At check time they are re-resolved so CDN/anycast
+    /// rotation doesn't cause false passes.
+    pub fn from_hosts(entries: &[impl AsRef<str>]) -> Result<Self> {
+        use std::net::ToSocketAddrs;
+        let mut blocked_ips = HashSet::new();
+        let mut hostnames = Vec::new();
+        for entry in entries {
+            let entry = entry.as_ref();
+            if let Ok(ip) = entry.parse::<IpAddr>() {
+                blocked_ips.insert(ip);
+            } else {
+                let addrs = (entry, 0u16)
+                    .to_socket_addrs()
+                    .map_err(|e| anyhow!("resolve {:?}: {}", entry, e))?;
+                let mut found = false;
+                for sa in addrs {
+                    blocked_ips.insert(sa.ip());
+                    found = true;
+                }
+                if !found {
+                    return Err(anyhow!("hostname {:?} resolved to zero addresses", entry));
+                }
+                hostnames.push(entry.to_string());
+            }
+        }
+        Ok(Self {
+            blocked_ips,
+            hostnames,
+        })
+    }
+
+    fn is_blocked(&self, ip: &IpAddr) -> bool {
+        if self.blocked_ips.contains(ip) {
+            return true;
+        }
+        use std::net::ToSocketAddrs;
+        for host in &self.hostnames {
+            if let Ok(addrs) = (host.as_str(), 0u16).to_socket_addrs() {
+                for sa in addrs {
+                    if &sa.ip() == ip {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+}
+
 impl NetworkPolicy {
     fn check(&self, addr: &std::net::SocketAddr) -> Result<()> {
         match self {
             NetworkPolicy::AllowAll => Ok(()),
             NetworkPolicy::AllowList(al) => {
-                // Allow DNS (port 53) — hostname-based allowlists need
-                // the guest to reach DNS servers for resolution.
                 if addr.port() == 53 || al.is_allowed(&addr.ip()) {
                     Ok(())
                 } else {
                     Err(anyhow!("network policy denies connection to {}", addr))
+                }
+            }
+            NetworkPolicy::BlockList(bl) => {
+                // DNS (port 53) is always allowed so the guest can resolve names.
+                if addr.port() == 53 {
+                    return Ok(());
+                }
+                if bl.is_blocked(&addr.ip()) {
+                    Err(anyhow!("network policy denies connection to {}", addr))
+                } else {
+                    Ok(())
                 }
             }
         }
@@ -2466,6 +2540,57 @@ mod tests {
     fn allowlist_rejects_unresolvable_hostname() {
         let result = AllowList::from_hosts(&["this.host.definitely.does.not.exist.example"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn network_policy_blocklist_permits_unlisted_ip() {
+        let bl = BlockList::from_hosts(&["1.2.3.4"]).unwrap();
+        let policy = NetworkPolicy::BlockList(bl);
+        let addr: std::net::SocketAddr = "5.6.7.8:443".parse().unwrap();
+        assert!(policy.check(&addr).is_ok());
+    }
+
+    #[test]
+    fn network_policy_blocklist_denies_listed_ip() {
+        let bl = BlockList::from_hosts(&["1.2.3.4"]).unwrap();
+        let policy = NetworkPolicy::BlockList(bl);
+        let addr: std::net::SocketAddr = "1.2.3.4:80".parse().unwrap();
+        let err = policy.check(&addr).unwrap_err();
+        assert!(err.to_string().contains("network policy denies"), "{err}");
+    }
+
+    #[test]
+    fn network_policy_blocklist_allows_dns() {
+        let bl = BlockList::from_hosts(&["1.2.3.4"]).unwrap();
+        let policy = NetworkPolicy::BlockList(bl);
+        let addr: std::net::SocketAddr = "1.2.3.4:53".parse().unwrap();
+        assert!(policy.check(&addr).is_ok());
+    }
+
+    #[test]
+    fn blocklist_resolves_hostnames() {
+        let bl = BlockList::from_hosts(&["localhost"]).unwrap();
+        assert!(
+            bl.is_blocked(&"127.0.0.1".parse().unwrap()) || bl.is_blocked(&"::1".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn blocklist_rejects_unresolvable_hostname() {
+        let result = BlockList::from_hosts(&["this.host.definitely.does.not.exist.example"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn net_tools_registered_with_blocklist() {
+        let mut tools = ToolRegistry::new();
+        let exit_code = Arc::new(AtomicI32::new(0));
+        let bl = BlockList::from_hosts(&["1.2.3.4"]).unwrap();
+        register_internal_tools(&mut tools, &exit_code, Some(&NetworkPolicy::BlockList(bl)));
+        let req = br#"{"name":"net_socket","args":{"family":2,"type":1}}"#;
+        let resp = tools.dispatch(req);
+        let s = std::str::from_utf8(&resp).unwrap();
+        assert!(s.contains("\"fd\""), "net_socket should work: {s}");
     }
 
     #[test]
