@@ -28,10 +28,11 @@
 //!     source: pyhl::InstallSource::Ghcr,
 //!     mounts: &[],
 //!     network: None,
+//!     listen_ports: None,
 //!     force: false,
 //! })?;
 //!
-//! let mut rt = pyhl::Runtime::new(home, &[Preopen::new("./share", "/host")?], None)?;
+//! let mut rt = pyhl::Runtime::new(home, &[Preopen::new("./share", "/host")?], None, None)?;
 //! rt.run_code("print('hello from rust')")?;
 //! rt.run_code("print('hermetic second call')")?;  // fresh __main__ each time
 //! # Ok(())
@@ -91,6 +92,10 @@ pub struct InstallOptions<'a> {
     /// Network policy. `None` disables networking; `Some(policy)`
     /// enables `net_*` tools with the given restrictions.
     pub network: Option<&'a crate::NetworkPolicy>,
+
+    /// Ports the guest may bind to for inbound connections.
+    /// `None` means outbound-only (when networking is enabled).
+    pub listen_ports: Option<&'a crate::ListenPorts>,
 
     /// Overwrite an existing install.
     pub force: bool,
@@ -191,6 +196,9 @@ pub fn install(opts: &InstallOptions<'_>) -> Result<InstallReport> {
         if let Some(policy) = opts.network {
             builder = builder.network(policy.clone());
         }
+        if let Some(lp) = opts.listen_ports {
+            builder = builder.listen_ports(lp.clone());
+        }
         let mut sbox = builder.build()?;
         sbox.restore()?;
         let _: () = sbox.call_named("run", "pass".to_string())?;
@@ -242,11 +250,13 @@ impl Runtime {
     /// `{home}/snapshot.hls` and mmap-loads it. `mounts` specify host
     /// directories to expose under the guest paths that were baked in
     /// at `install` time. `network` enables guest networking with the
-    /// given policy (`None` = disabled).
+    /// given policy (`None` = disabled). `listen_ports` controls which
+    /// ports the guest may bind to (`None` = outbound-only).
     pub fn new(
         home: &Path,
         mounts: &[Preopen],
         network: Option<&crate::NetworkPolicy>,
+        listen_ports: Option<&crate::ListenPorts>,
     ) -> Result<Self> {
         default_surrogate_count();
         let snap = home.join(SNAPSHOT_FILE);
@@ -262,7 +272,13 @@ impl Runtime {
         } else {
             None
         };
-        let sandbox = Sandbox::from_snapshot_file_configured(&snap, mounts, initrd_ref, network)?;
+        let sandbox = Sandbox::from_snapshot_file_configured(
+            &snap,
+            mounts,
+            initrd_ref,
+            network,
+            listen_ports,
+        )?;
         Ok(Self {
             sandbox,
             first_run: true,

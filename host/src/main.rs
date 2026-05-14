@@ -8,7 +8,9 @@
 
 use anyhow::Result;
 use clap::Parser;
-use hyperlight_unikraft::{parse_memory, AllowList, BlockList, NetworkPolicy, Preopen, Sandbox};
+use hyperlight_unikraft::{
+    parse_memory, AllowList, BlockList, ListenPorts, NetworkPolicy, Preopen, Sandbox,
+};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -81,6 +83,12 @@ struct Args {
         conflicts_with = "net_allow"
     )]
     net_block: Vec<String>,
+
+    /// Allow the guest to bind (listen) on the given port. Implies --net.
+    /// Without this flag, `net_bind` is rejected (outbound-only).
+    /// Repeatable: `--port 8080 --port 3000`.
+    #[arg(long, value_name = "PORT")]
+    port: Vec<u16>,
 
     /// Run the application N additional times via snapshot/restore + call.
     /// The first run always happens. --repeat=2 means 3 total runs.
@@ -177,6 +185,7 @@ fn main() -> Result<()> {
         None => args.app_args.clone(),
     };
 
+    let has_ports = !args.port.is_empty();
     let network = if !args.net_allow.is_empty() {
         Some(NetworkPolicy::AllowList(AllowList::from_hosts(
             &args.net_allow,
@@ -185,8 +194,14 @@ fn main() -> Result<()> {
         Some(NetworkPolicy::BlockList(BlockList::from_hosts(
             &args.net_block,
         )?))
-    } else if args.net {
+    } else if args.net || has_ports {
         Some(NetworkPolicy::AllowAll)
+    } else {
+        None
+    };
+
+    let listen_ports = if has_ports {
+        Some(ListenPorts::from_ports(args.port.iter().copied()))
     } else {
         None
     };
@@ -203,6 +218,9 @@ fn main() -> Result<()> {
     }
     if let Some(policy) = network {
         builder = builder.network(policy);
+    }
+    if let Some(ports) = listen_ports {
+        builder = builder.listen_ports(ports);
     }
     if args.enable_tools {
         builder = builder.tool("echo", Ok);

@@ -326,6 +326,42 @@ impl NetworkPolicy {
 }
 
 // ---------------------------------------------------------------------------
+// Listen-port allowlist (inbound)
+// ---------------------------------------------------------------------------
+
+/// Controls which ports a guest may bind to for inbound connections.
+///
+/// Orthogonal to [`NetworkPolicy`] (which governs *outbound* destinations).
+/// Without a `ListenPorts` allowlist, `net_bind` / `net_listen` /
+/// `net_accept` are still registered but `net_bind` rejects every call.
+#[derive(Clone, Debug)]
+pub struct ListenPorts {
+    ports: HashSet<u16>,
+}
+
+impl ListenPorts {
+    /// Create from an iterator of port numbers.
+    pub fn from_ports(ports: impl IntoIterator<Item = u16>) -> Self {
+        Self {
+            ports: ports.into_iter().collect(),
+        }
+    }
+
+    /// Returns `Ok(())` if `port` is in the allowlist.
+    fn check(&self, port: u16) -> Result<()> {
+        if self.ports.contains(&port) {
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "Permission denied: port {} not in listen allowlist ({:?})",
+                port,
+                self.ports
+            ))
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
 
@@ -968,6 +1004,7 @@ fn register_internal_tools(
     tools: &mut ToolRegistry,
     exit_code: &Arc<AtomicI32>,
     network: Option<&NetworkPolicy>,
+    listen_ports: Option<&ListenPorts>,
 ) {
     let ec = exit_code.clone();
     tools.register("__hl_exit", move |args| {
@@ -983,7 +1020,7 @@ fn register_internal_tools(
         Ok(serde_json::json!({}))
     });
     if let Some(policy) = network {
-        register_net_tools(tools, policy);
+        register_net_tools(tools, policy, listen_ports);
     }
 }
 
@@ -1060,7 +1097,11 @@ fn sockaddr_to_json(addr: SocketAddr) -> serde_json::Value {
     })
 }
 
-fn register_net_tools(tools: &mut ToolRegistry, policy: &NetworkPolicy) {
+fn register_net_tools(
+    tools: &mut ToolRegistry,
+    policy: &NetworkPolicy,
+    listen_ports: Option<&ListenPorts>,
+) {
     use base64::Engine;
     use serde_json::json;
 
@@ -1108,11 +1149,16 @@ fn register_net_tools(tools: &mut ToolRegistry, policy: &NetworkPolicy) {
         Ok(json!({}))
     });
 
-    // net_bind
+    // net_bind — gated by listen-port allowlist
     let t = table.clone();
+    let lp = listen_ports.cloned().map(Arc::new);
     tools.register("net_bind", move |args| {
         let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))? as u32;
         let addr = parse_sockaddr(&args)?;
+        match lp.as_ref() {
+            Some(ports) => ports.check(addr.port())?,
+            None => return Err(anyhow!("Permission denied: no --port specified for bind")),
+        }
         let sa: SockAddr = addr.into();
         let tbl = t.lock().unwrap();
         let sock = tbl.get_socket(fd)?;
@@ -1608,6 +1654,7 @@ pub struct SandboxBuilder {
     stack_size: Option<u64>,
     preopens: Vec<Preopen>,
     network: Option<NetworkPolicy>,
+    listen_ports: Option<ListenPorts>,
     tools: ToolRegistry,
     has_tools: bool,
 }
@@ -1672,6 +1719,17 @@ impl SandboxBuilder {
         self
     }
 
+    /// Allow the guest to bind to the given ports for inbound connections.
+    ///
+    /// Requires [`network`](Self::network) to also be set — without a
+    /// network policy the net tools are not registered at all. When net
+    /// tools *are* registered but no `listen_ports` is set, `net_bind`
+    /// rejects every call (outbound-only mode).
+    pub fn listen_ports(mut self, ports: ListenPorts) -> Self {
+        self.listen_ports = Some(ports);
+        self
+    }
+
     /// Register a host function callable from the guest via `__dispatch`.
     pub fn tool<F>(mut self, name: &str, handler: F) -> Self
     where
@@ -1694,6 +1752,7 @@ impl SandboxBuilder {
             None
         };
         let net = self.network.as_ref();
+        let lp = self.listen_ports.as_ref();
         match self.initrd {
             Some(InitrdSource::File(path)) => Sandbox::evolve_mapped(
                 &self.kernel,
@@ -1703,6 +1762,7 @@ impl SandboxBuilder {
                 tools,
                 &self.preopens,
                 net,
+                lp,
             ),
             Some(InitrdSource::Bytes(bytes)) => Sandbox::evolve_inline(
                 &self.kernel,
@@ -1712,6 +1772,7 @@ impl SandboxBuilder {
                 tools,
                 &self.preopens,
                 net,
+                lp,
             ),
             None => Sandbox::evolve_mapped(
                 &self.kernel,
@@ -1721,6 +1782,7 @@ impl SandboxBuilder {
                 tools,
                 &self.preopens,
                 net,
+                lp,
             ),
         }
     }
@@ -1738,12 +1800,14 @@ impl Sandbox {
             stack_size: None,
             preopens: Vec::new(),
             network: None,
+            listen_ports: None,
             tools: ToolRegistry::new(),
             has_tools: false,
         }
     }
 
     /// Low-level: boot with an in-memory initrd buffer. Prefer the builder.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn evolve_inline(
         kernel_path: &Path,
         initrd: Option<&[u8]>,
@@ -1752,6 +1816,7 @@ impl Sandbox {
         tools: Option<ToolRegistry>,
         preopens: &[Preopen],
         network: Option<&NetworkPolicy>,
+        listen_ports: Option<&ListenPorts>,
     ) -> Result<Self> {
         if !kernel_path.exists() {
             return Err(anyhow!("Kernel not found: {:?}", kernel_path));
@@ -1767,7 +1832,7 @@ impl Sandbox {
 
         let exit_code = Arc::new(AtomicI32::new(0));
         let mut tools = build_tools(tools, preopens)?.unwrap_or_default();
-        register_internal_tools(&mut tools, &exit_code, network);
+        register_internal_tools(&mut tools, &exit_code, network, listen_ports);
         let tools = Arc::new(tools);
         let tools_ref = tools.clone();
         usbox.register_host_function("__dispatch", move |payload: Vec<u8>| -> Vec<u8> {
@@ -1778,6 +1843,7 @@ impl Sandbox {
     }
 
     /// Low-level: boot with a zero-copy mapped initrd file. Prefer the builder.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn evolve_mapped(
         kernel_path: &Path,
         initrd_path: Option<&Path>,
@@ -1786,6 +1852,7 @@ impl Sandbox {
         tools: Option<ToolRegistry>,
         preopens: &[Preopen],
         network: Option<&NetworkPolicy>,
+        listen_ports: Option<&ListenPorts>,
     ) -> Result<Self> {
         if !kernel_path.exists() {
             return Err(anyhow!("Kernel not found: {:?}", kernel_path));
@@ -1817,7 +1884,7 @@ impl Sandbox {
 
         let exit_code = Arc::new(AtomicI32::new(0));
         let mut tools = build_tools(tools, preopens)?.unwrap_or_default();
-        register_internal_tools(&mut tools, &exit_code, network);
+        register_internal_tools(&mut tools, &exit_code, network, listen_ports);
         let tools = Arc::new(tools);
         let tools_ref = tools.clone();
         usbox.register_host_function("__dispatch", move |payload: Vec<u8>| -> Vec<u8> {
@@ -1956,7 +2023,7 @@ impl Sandbox {
     /// a 2.5 GB snapshot — enough to double the whole `pyhl run` wall
     /// time on simple scripts.
     pub fn from_snapshot_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        Self::from_snapshot_file_full(path, &[], None, None)
+        Self::from_snapshot_file_full(path, &[], None, None, None)
     }
 
     /// Load a previously-persisted snapshot and register a
@@ -1971,7 +2038,7 @@ impl Sandbox {
     /// fixed at setup time because it lives in the snapshot's memory
     /// image.
     pub fn from_snapshot_file_with<P: AsRef<Path>>(path: P, preopens: &[Preopen]) -> Result<Self> {
-        Self::from_snapshot_file_full(path, preopens, None, None)
+        Self::from_snapshot_file_full(path, preopens, None, None, None)
     }
 
     /// Load a snapshot with an initrd file re-mapped at the standard
@@ -1983,18 +2050,31 @@ impl Sandbox {
         preopens: &[Preopen],
         initrd: I,
     ) -> Result<Self> {
-        Self::from_snapshot_file_full(path, preopens, Some(initrd.as_ref().to_path_buf()), None)
+        Self::from_snapshot_file_full(
+            path,
+            preopens,
+            Some(initrd.as_ref().to_path_buf()),
+            None,
+            None,
+        )
     }
 
-    /// Load a snapshot with full configuration: preopens, initrd, and
-    /// network policy.
+    /// Load a snapshot with full configuration: preopens, initrd,
+    /// network policy, and listen-port allowlist.
     pub fn from_snapshot_file_configured<P: AsRef<Path>>(
         path: P,
         preopens: &[Preopen],
         initrd: Option<&Path>,
         network: Option<&NetworkPolicy>,
+        listen_ports: Option<&ListenPorts>,
     ) -> Result<Self> {
-        Self::from_snapshot_file_full(path, preopens, initrd.map(|p| p.to_path_buf()), network)
+        Self::from_snapshot_file_full(
+            path,
+            preopens,
+            initrd.map(|p| p.to_path_buf()),
+            network,
+            listen_ports,
+        )
     }
 
     fn from_snapshot_file_full<P: AsRef<Path>>(
@@ -2002,13 +2082,14 @@ impl Sandbox {
         preopens: &[Preopen],
         initrd: Option<std::path::PathBuf>,
         network: Option<&NetworkPolicy>,
+        listen_ports: Option<&ListenPorts>,
     ) -> Result<Self> {
         let loaded = Snapshot::from_file_unchecked(path.as_ref())?;
         let arc = Arc::new(loaded);
 
         let exit_code = Arc::new(AtomicI32::new(0));
         let mut tools = build_tools(None, preopens)?.unwrap_or_default();
-        register_internal_tools(&mut tools, &exit_code, network);
+        register_internal_tools(&mut tools, &exit_code, network, listen_ports);
         let tools = Arc::new(tools);
         let tools_ref = tools.clone();
 
@@ -2046,7 +2127,7 @@ pub fn run_vm(
     app_args: &[String],
     config: VmConfig,
 ) -> Result<()> {
-    let _ = Sandbox::evolve_inline(kernel_path, initrd, app_args, config, None, &[], None)?;
+    let _ = Sandbox::evolve_inline(kernel_path, initrd, app_args, config, None, &[], None, None)?;
     Ok(())
 }
 
@@ -2066,6 +2147,7 @@ pub fn run_vm_with_tools(
         Some(tools),
         &[],
         None,
+        None,
     )?;
     Ok(())
 }
@@ -2079,7 +2161,16 @@ pub fn run_vm_with_preopens(
     config: VmConfig,
     preopens: &[Preopen],
 ) -> Result<()> {
-    let _ = Sandbox::evolve_inline(kernel_path, initrd, app_args, config, None, preopens, None)?;
+    let _ = Sandbox::evolve_inline(
+        kernel_path,
+        initrd,
+        app_args,
+        config,
+        None,
+        preopens,
+        None,
+        None,
+    )?;
     Ok(())
 }
 
@@ -2107,7 +2198,7 @@ pub fn run_vm_capture_output(
     // Phase 1: evolve — boots the kernel and takes a post-init snapshot.
     // No application output happens here.
     let mut sandbox =
-        Sandbox::evolve_inline(kernel_path, initrd, app_args, config, None, &[], None)?;
+        Sandbox::evolve_inline(kernel_path, initrd, app_args, config, None, &[], None, None)?;
     let setup_time = setup_start.elapsed();
 
     // Redirect stderr to a temp file before the call phase
@@ -2586,7 +2677,12 @@ mod tests {
         let mut tools = ToolRegistry::new();
         let exit_code = Arc::new(AtomicI32::new(0));
         let bl = BlockList::from_hosts(&["1.2.3.4"]).unwrap();
-        register_internal_tools(&mut tools, &exit_code, Some(&NetworkPolicy::BlockList(bl)));
+        register_internal_tools(
+            &mut tools,
+            &exit_code,
+            Some(&NetworkPolicy::BlockList(bl)),
+            None,
+        );
         let req = br#"{"name":"net_socket","args":{"family":2,"type":1}}"#;
         let resp = tools.dispatch(req);
         let s = std::str::from_utf8(&resp).unwrap();
@@ -2597,7 +2693,7 @@ mod tests {
     fn net_tools_not_registered_without_policy() {
         let mut tools = ToolRegistry::new();
         let exit_code = Arc::new(AtomicI32::new(0));
-        register_internal_tools(&mut tools, &exit_code, None);
+        register_internal_tools(&mut tools, &exit_code, None, None);
         let req = br#"{"name":"net_socket","args":{"family":2,"type":1}}"#;
         let resp = tools.dispatch(req);
         let s = std::str::from_utf8(&resp).unwrap();
@@ -2608,10 +2704,90 @@ mod tests {
     fn net_tools_registered_with_allow_all() {
         let mut tools = ToolRegistry::new();
         let exit_code = Arc::new(AtomicI32::new(0));
-        register_internal_tools(&mut tools, &exit_code, Some(&NetworkPolicy::AllowAll));
+        register_internal_tools(&mut tools, &exit_code, Some(&NetworkPolicy::AllowAll), None);
         let req = br#"{"name":"net_socket","args":{"family":2,"type":1}}"#;
         let resp = tools.dispatch(req);
         let s = std::str::from_utf8(&resp).unwrap();
         assert!(s.contains("\"fd\""), "net_socket should work: {s}");
+    }
+
+    // -- ListenPorts tests -----------------------------------------------------
+
+    #[test]
+    fn listen_ports_permits_listed_port() {
+        let lp = ListenPorts::from_ports([8080]);
+        assert!(lp.check(8080).is_ok());
+    }
+
+    #[test]
+    fn listen_ports_denies_unlisted_port() {
+        let lp = ListenPorts::from_ports([8080]);
+        let err = lp.check(9090).unwrap_err();
+        assert!(err.to_string().contains("Permission denied"), "{err}");
+    }
+
+    #[test]
+    fn net_bind_denied_without_listen_ports() {
+        let mut tools = ToolRegistry::new();
+        let exit_code = Arc::new(AtomicI32::new(0));
+        register_internal_tools(&mut tools, &exit_code, Some(&NetworkPolicy::AllowAll), None);
+        // Create a socket first
+        let req = br#"{"name":"net_socket","args":{"family":2,"type":1}}"#;
+        let resp = tools.dispatch(req);
+        let s = std::str::from_utf8(&resp).unwrap();
+        assert!(s.contains("\"fd\""), "net_socket should work: {s}");
+        // Try to bind — should fail because no listen_ports
+        let req = br#"{"name":"net_bind","args":{"fd":0,"addr":"127.0.0.1","port":8080}}"#;
+        let resp = tools.dispatch(req);
+        let s = std::str::from_utf8(&resp).unwrap();
+        assert!(s.contains("\"error\""), "net_bind should be denied: {s}");
+        assert!(s.contains("no --port"), "{s}");
+    }
+
+    #[test]
+    fn net_bind_allowed_with_matching_port() {
+        let mut tools = ToolRegistry::new();
+        let exit_code = Arc::new(AtomicI32::new(0));
+        let lp = ListenPorts::from_ports([8080]);
+        register_internal_tools(
+            &mut tools,
+            &exit_code,
+            Some(&NetworkPolicy::AllowAll),
+            Some(&lp),
+        );
+        let req = br#"{"name":"net_socket","args":{"family":2,"type":1}}"#;
+        let resp = tools.dispatch(req);
+        let s = std::str::from_utf8(&resp).unwrap();
+        assert!(s.contains("\"fd\""), "net_socket should work: {s}");
+        let v: serde_json::Value = serde_json::from_slice(&resp).unwrap();
+        let fd = v["result"]["fd"].as_u64().unwrap();
+        let req =
+            format!(r#"{{"name":"net_bind","args":{{"fd":{fd},"addr":"127.0.0.1","port":8080}}}}"#);
+        let resp = tools.dispatch(req.as_bytes());
+        let s = std::str::from_utf8(&resp).unwrap();
+        assert!(!s.contains("\"error\""), "net_bind should succeed: {s}");
+    }
+
+    #[test]
+    fn net_bind_denied_with_wrong_port() {
+        let mut tools = ToolRegistry::new();
+        let exit_code = Arc::new(AtomicI32::new(0));
+        let lp = ListenPorts::from_ports([8080]);
+        register_internal_tools(
+            &mut tools,
+            &exit_code,
+            Some(&NetworkPolicy::AllowAll),
+            Some(&lp),
+        );
+        let req = br#"{"name":"net_socket","args":{"family":2,"type":1}}"#;
+        let resp = tools.dispatch(req);
+        let v: serde_json::Value = serde_json::from_slice(&resp).unwrap();
+        let fd = v["result"]["fd"].as_u64().unwrap();
+        let req =
+            format!(r#"{{"name":"net_bind","args":{{"fd":{fd},"addr":"127.0.0.1","port":9090}}}}"#);
+        let resp = tools.dispatch(req.as_bytes());
+        let s = std::str::from_utf8(&resp).unwrap();
+        assert!(s.contains("\"error\""), "net_bind should be denied: {s}");
+        assert!(s.contains("Permission denied"), "{s}");
     }
 }

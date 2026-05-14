@@ -26,7 +26,7 @@ use hyperlight_unikraft::pyhl::{
     copy_replace, discover_source_artifacts, extract_from_ghcr, GHCR_INITRD_IMAGE,
     GHCR_KERNEL_IMAGE,
 };
-use hyperlight_unikraft::{AllowList, BlockList, NetworkPolicy, Preopen, Sandbox};
+use hyperlight_unikraft::{AllowList, BlockList, ListenPorts, NetworkPolicy, Preopen, Sandbox};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -41,6 +41,7 @@ fn build_network_policy(
     net: bool,
     net_allow: &[String],
     net_block: &[String],
+    has_ports: bool,
 ) -> Result<Option<NetworkPolicy>> {
     if !net_allow.is_empty() {
         Ok(Some(NetworkPolicy::AllowList(AllowList::from_hosts(
@@ -50,10 +51,18 @@ fn build_network_policy(
         Ok(Some(NetworkPolicy::BlockList(BlockList::from_hosts(
             net_block,
         )?)))
-    } else if net {
+    } else if net || has_ports {
         Ok(Some(NetworkPolicy::AllowAll))
     } else {
         Ok(None)
+    }
+}
+
+fn build_listen_ports(ports: &[u16]) -> Option<ListenPorts> {
+    if ports.is_empty() {
+        None
+    } else {
+        Some(ListenPorts::from_ports(ports.iter().copied()))
     }
 }
 
@@ -187,6 +196,12 @@ struct SetupArgs {
         conflicts_with = "net_allow"
     )]
     net_block: Vec<String>,
+
+    /// Allow the guest to bind (listen) on the given port. Implies --net.
+    /// Without this flag, `net_bind` is rejected (outbound-only).
+    /// Repeatable: `--port 8080 --port 3000`.
+    #[arg(long, value_name = "PORT")]
+    port: Vec<u16>,
 }
 
 #[derive(Args)]
@@ -235,6 +250,12 @@ struct RunArgs {
         conflicts_with = "net_allow"
     )]
     net_block: Vec<String>,
+
+    /// Allow the guest to bind (listen) on the given port. Implies --net.
+    /// Without this flag, `net_bind` is rejected (outbound-only).
+    /// Repeatable: `--port 8080 --port 3000`.
+    #[arg(long, value_name = "PORT")]
+    port: Vec<u16>,
 
     /// Print evolve/warmup/per-run timing to stderr. Off by default so the
     /// user's script output is clean.
@@ -393,7 +414,13 @@ fn cmd_setup(args: SetupArgs) -> Result<()> {
         .iter()
         .map(|m| parse_mount(m))
         .collect::<Result<_>>()?;
-    let network = build_network_policy(args.net, &args.net_allow, &args.net_block)?;
+    let listen_ports = build_listen_ports(&args.port);
+    let network = build_network_policy(
+        args.net,
+        &args.net_allow,
+        &args.net_block,
+        listen_ports.is_some(),
+    )?;
 
     eprintln!("pyhl: warming up Python and persisting snapshot…");
     let t_warm = Instant::now();
@@ -406,6 +433,9 @@ fn cmd_setup(args: SetupArgs) -> Result<()> {
         }
         if let Some(ref policy) = network {
             builder = builder.network(policy.clone());
+        }
+        if let Some(ref lp) = listen_ports {
+            builder = builder.listen_ports(lp.clone());
         }
         let mut sbox = builder.build()?;
         sbox.restore()?;
@@ -531,7 +561,13 @@ fn cmd_run(args: RunArgs) -> Result<()> {
         .iter()
         .map(|m| parse_mount(m))
         .collect::<Result<_>>()?;
-    let network = build_network_policy(args.net, &args.net_allow, &args.net_block)?;
+    let listen_ports = build_listen_ports(&args.port);
+    let network = build_network_policy(
+        args.net,
+        &args.net_allow,
+        &args.net_block,
+        listen_ports.is_some(),
+    )?;
 
     let initrd = home.join(INITRD_FILE);
 
@@ -546,6 +582,7 @@ fn cmd_run(args: RunArgs) -> Result<()> {
         &run_preopens,
         initrd_ref,
         network.as_ref(),
+        listen_ports.as_ref(),
     )?;
     if args.verbose {
         eprintln!(

@@ -26,9 +26,9 @@ run-urllib:
 run-https:
     hyperlight-unikraft {{kernel}} --initrd {{initrd}} --memory {{memory}} --net -- /https_test.py
 
-# Run echo server
+# Run echo server (--port implies --net)
 run-echo:
-    hyperlight-unikraft {{kernel}} --initrd {{initrd}} --memory {{memory}} --net -- /echo_server.py
+    hyperlight-unikraft {{kernel}} --initrd {{initrd}} --memory {{memory}} --port 8080 -- /echo_server.py
 
 # Build rootfs via Docker (cross-platform)
 rootfs:
