@@ -85,11 +85,9 @@ jobs:
     permissions: {}
     steps:
       - run: |
-          results=("${{ needs.checks.result }}")
-          for r in "${results[@]}"; do
-            if [[ "$r" != "success" && "$r" != "skipped" ]]; then
-              echo "Job failed with result: $r"
-              exit 1
-            fi
-          done
+          r="${{ needs.checks.result }}"
+          if [[ "$r" != "success" ]]; then
+            echo "FAIL: checks = $r"
+            exit 1
+          fi
           echo "All checks passed"

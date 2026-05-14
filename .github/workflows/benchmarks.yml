@@ -536,11 +536,20 @@ jobs:
     permissions: {}
     steps:
       - run: |
-          results=("${{ needs.build-image.result }}" "${{ needs.bench-linux.result }}" "${{ needs.bench-windows.result }}")
-          for r in "${results[@]}"; do
-            if [[ "$r" != "success" && "$r" != "skipped" ]]; then
-              echo "Job failed with result: $r"
-              exit 1
+          declare -A results=(
+            [build-image]="${{ needs.build-image.result }}"
+            [bench-linux]="${{ needs.bench-linux.result }}"
+            [bench-windows]="${{ needs.bench-windows.result }}"
+          )
+          failed=0
+          for job in "${!results[@]}"; do
+            r="${results[$job]}"
+            if [[ "$r" != "success" ]]; then
+              echo "FAIL: $job = $r"
+              failed=1
             fi
           done
+          if [[ "$failed" -eq 1 ]]; then
+            exit 1
+          fi
           echo "All checks passed"

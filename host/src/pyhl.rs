@@ -27,10 +27,11 @@
 //!     home,
 //!     source: pyhl::InstallSource::Ghcr,
 //!     mounts: &[],
+//!     network: None,
 //!     force: false,
 //! })?;
 //!
-//! let mut rt = pyhl::Runtime::new(home, &[Preopen::new("./share", "/host")?])?;
+//! let mut rt = pyhl::Runtime::new(home, &[Preopen::new("./share", "/host")?], None)?;
 //! rt.run_code("print('hello from rust')")?;
 //! rt.run_code("print('hermetic second call')")?;  // fresh __main__ each time
 //! # Ok(())
@@ -86,6 +87,10 @@ pub struct InstallOptions<'a> {
     /// persisted snapshot (the guest mounts hostfs at `guest_path`
     /// during warmup). `Runtime::new` only remaps the host side.
     pub mounts: &'a [Preopen],
+
+    /// Network policy. `None` disables networking; `Some(policy)`
+    /// enables `net_*` tools with the given restrictions.
+    pub network: Option<&'a crate::NetworkPolicy>,
 
     /// Overwrite an existing install.
     pub force: bool,
@@ -183,6 +188,9 @@ pub fn install(opts: &InstallOptions<'_>) -> Result<InstallReport> {
         for p in opts.mounts {
             builder = builder.preopen(p.clone());
         }
+        if let Some(policy) = opts.network {
+            builder = builder.network(policy.clone());
+        }
         let mut sbox = builder.build()?;
         sbox.restore()?;
         let _: () = sbox.call_named("run", "pass".to_string())?;
@@ -233,8 +241,13 @@ impl Runtime {
     /// Open a runtime against an existing install. Looks for
     /// `{home}/snapshot.hls` and mmap-loads it. `mounts` specify host
     /// directories to expose under the guest paths that were baked in
-    /// at `install` time.
-    pub fn new(home: &Path, mounts: &[Preopen]) -> Result<Self> {
+    /// at `install` time. `network` enables guest networking with the
+    /// given policy (`None` = disabled).
+    pub fn new(
+        home: &Path,
+        mounts: &[Preopen],
+        network: Option<&crate::NetworkPolicy>,
+    ) -> Result<Self> {
         default_surrogate_count();
         let snap = home.join(SNAPSHOT_FILE);
         if !snap.is_file() {
@@ -244,13 +257,12 @@ impl Runtime {
             );
         }
         let initrd = home.join(INITRD_FILE);
-        let sandbox = if initrd.is_file() {
-            Sandbox::from_snapshot_file_with_initrd(&snap, mounts, &initrd)?
-        } else if mounts.is_empty() {
-            Sandbox::from_snapshot_file(&snap)?
+        let initrd_ref = if initrd.is_file() {
+            Some(initrd.as_path())
         } else {
-            Sandbox::from_snapshot_file_with(&snap, mounts)?
+            None
         };
+        let sandbox = Sandbox::from_snapshot_file_configured(&snap, mounts, initrd_ref, network)?;
         Ok(Self {
             sandbox,
             first_run: true,

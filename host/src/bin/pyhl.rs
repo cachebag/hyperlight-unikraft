@@ -26,7 +26,7 @@ use hyperlight_unikraft::pyhl::{
     copy_replace, discover_source_artifacts, extract_from_ghcr, GHCR_INITRD_IMAGE,
     GHCR_KERNEL_IMAGE,
 };
-use hyperlight_unikraft::{Preopen, Sandbox};
+use hyperlight_unikraft::{AllowList, NetworkPolicy, Preopen, Sandbox};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -35,6 +35,18 @@ use std::time::Instant;
 /// path is `/host` when omitted.
 fn parse_mount(spec: &str) -> Result<Preopen> {
     Preopen::parse_cli(spec).map_err(|e| anyhow!("invalid --mount {:?}: {}", spec, e))
+}
+
+fn build_network_policy(net: bool, net_allow: &[String]) -> Result<Option<NetworkPolicy>> {
+    if !net_allow.is_empty() {
+        Ok(Some(NetworkPolicy::AllowList(AllowList::from_hosts(
+            net_allow,
+        )?)))
+    } else if net {
+        Ok(Some(NetworkPolicy::AllowAll))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Keep in sync with `py_initialize_once` in examples/python-agent-driver/
@@ -145,6 +157,15 @@ struct SetupArgs {
     /// given to `setup`.
     #[arg(long = "mount", value_name = "HOST[:GUEST]")]
     mounts: Vec<String>,
+
+    /// Enable guest networking.
+    #[arg(long)]
+    net: bool,
+
+    /// Restrict guest networking to the listed hosts/IPs.
+    /// Implies --net. Repeatable.
+    #[arg(long = "net-allow", value_name = "HOST_OR_IP")]
+    net_allow: Vec<String>,
 }
 
 #[derive(Args)]
@@ -171,6 +192,15 @@ struct RunArgs {
     /// remappable per-run.
     #[arg(long = "mount", value_name = "HOST[:GUEST]")]
     mounts: Vec<String>,
+
+    /// Enable guest networking.
+    #[arg(long)]
+    net: bool,
+
+    /// Restrict guest networking to the listed hosts/IPs.
+    /// Implies --net. Repeatable.
+    #[arg(long = "net-allow", value_name = "HOST_OR_IP")]
+    net_allow: Vec<String>,
 
     /// Print evolve/warmup/per-run timing to stderr. Off by default so the
     /// user's script output is clean.
@@ -329,6 +359,7 @@ fn cmd_setup(args: SetupArgs) -> Result<()> {
         .iter()
         .map(|m| parse_mount(m))
         .collect::<Result<_>>()?;
+    let network = build_network_policy(args.net, &args.net_allow)?;
 
     eprintln!("pyhl: warming up Python and persisting snapshot…");
     let t_warm = Instant::now();
@@ -338,6 +369,9 @@ fn cmd_setup(args: SetupArgs) -> Result<()> {
             .heap_size(3 * 512 * 1024 * 1024);
         for p in &setup_preopens {
             builder = builder.preopen(p.clone());
+        }
+        if let Some(ref policy) = network {
+            builder = builder.network(policy.clone());
         }
         let mut sbox = builder.build()?;
         sbox.restore()?;
@@ -463,17 +497,22 @@ fn cmd_run(args: RunArgs) -> Result<()> {
         .iter()
         .map(|m| parse_mount(m))
         .collect::<Result<_>>()?;
+    let network = build_network_policy(args.net, &args.net_allow)?;
 
     let initrd = home.join(INITRD_FILE);
 
     let t_load = Instant::now();
-    let mut sandbox = if initrd.is_file() {
-        Sandbox::from_snapshot_file_with_initrd(&snapshot, &run_preopens, &initrd)?
-    } else if run_preopens.is_empty() {
-        Sandbox::from_snapshot_file(&snapshot)?
+    let initrd_ref = if initrd.is_file() {
+        Some(initrd.as_path())
     } else {
-        Sandbox::from_snapshot_file_with(&snapshot, &run_preopens)?
+        None
     };
+    let mut sandbox = Sandbox::from_snapshot_file_configured(
+        &snapshot,
+        &run_preopens,
+        initrd_ref,
+        network.as_ref(),
+    )?;
     if args.verbose {
         eprintln!(
             "[pyhl] load_snapshot={:.1}ms",

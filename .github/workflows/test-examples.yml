@@ -65,6 +65,7 @@ jobs:
           - python-agent
           - python-agent-driver
           - powershell
+          - networking-py
     steps:
       - uses: actions/checkout@v4
 
@@ -232,6 +233,10 @@ jobs:
             memory: "1Gi"
             args: "-- -NoProfile -File /scripts/hello.ps1"
             expect: "Hello, World! From PowerShell on Hyperlight"
+          - example: networking-py
+            memory: "512Mi"
+            args: "--net -- /urllib_get.py"
+            expect: "SUCCESS: urllib GET worked!"
     steps:
       - uses: actions/checkout@v4
 
@@ -402,6 +407,7 @@ jobs:
           - python-agent
           - python-agent-driver
           - powershell
+          - networking-py
     steps:
       - uses: actions/checkout@v4
 
@@ -559,6 +565,10 @@ jobs:
             memory: "1Gi"
             args: "-- -NoProfile -File /scripts/hello.ps1"
             expect: "Hello, World! From PowerShell on Hyperlight"
+          - example: networking-py
+            memory: "512Mi"
+            args: "--net -- /urllib_get.py"
+            expect: "SUCCESS: urllib GET worked!"
     steps:
       - uses: actions/checkout@v4
 
@@ -814,11 +824,25 @@ jobs:
     permissions: {}
     steps:
       - run: |
-          results=("${{ needs.build-example.result }}" "${{ needs.runtime-test.result }}" "${{ needs.package-images-for-windows.result }}" "${{ needs.runtime-test-windows.result }}" "${{ needs.pyhl-snapshot-test.result }}")
-          for r in "${results[@]}"; do
-            if [[ "$r" != "success" && "$r" != "skipped" ]]; then
-              echo "Job failed with result: $r"
-              exit 1
+          # Every job must succeed. "skipped" means a dependency failed
+          # and the job never ran — that must fail the gate, not sneak
+          # through as green.
+          declare -A results=(
+            [build-example]="${{ needs.build-example.result }}"
+            [runtime-test]="${{ needs.runtime-test.result }}"
+            [package-images-for-windows]="${{ needs.package-images-for-windows.result }}"
+            [runtime-test-windows]="${{ needs.runtime-test-windows.result }}"
+            [pyhl-snapshot-test]="${{ needs.pyhl-snapshot-test.result }}"
+          )
+          failed=0
+          for job in "${!results[@]}"; do
+            r="${results[$job]}"
+            if [[ "$r" != "success" ]]; then
+              echo "FAIL: $job = $r"
+              failed=1
             fi
           done
+          if [[ "$failed" -eq 1 ]]; then
+            exit 1
+          fi
           echo "All checks passed"
