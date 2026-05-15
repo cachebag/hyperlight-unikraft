@@ -1042,8 +1042,8 @@ enum HostSocket {
 }
 
 struct SocketTable {
-    sockets: HashMap<u32, HostSocket>,
-    next_id: u32,
+    sockets: HashMap<u64, HostSocket>,
+    next_id: u64,
 }
 
 impl SocketTable {
@@ -1054,32 +1054,32 @@ impl SocketTable {
         }
     }
 
-    fn insert(&mut self, sock: HostSocket) -> u32 {
+    fn insert(&mut self, sock: HostSocket) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         self.sockets.insert(id, sock);
         id
     }
 
-    fn get(&self, fd: u32) -> Result<&HostSocket> {
+    fn get(&self, fd: u64) -> Result<&HostSocket> {
         self.sockets
             .get(&fd)
             .ok_or_else(|| anyhow!("bad_fd: {}", fd))
     }
 
-    fn get_socket(&self, fd: u32) -> Result<&Socket> {
+    fn get_socket(&self, fd: u64) -> Result<&Socket> {
         match self.get(fd)? {
             HostSocket::Socket(s, _) => Ok(s),
         }
     }
 
-    fn get_sock_type(&self, fd: u32) -> Result<i32> {
+    fn get_sock_type(&self, fd: u64) -> Result<i32> {
         match self.get(fd)? {
             HostSocket::Socket(_, t) => Ok(*t),
         }
     }
 
-    fn remove(&mut self, fd: u32) -> Result<()> {
+    fn remove(&mut self, fd: u64) -> Result<()> {
         self.sockets
             .remove(&fd)
             .map(|_| ())
@@ -1150,7 +1150,7 @@ fn register_net_tools(
     let t = table.clone();
     let pol = policy.clone();
     tools.register("net_connect", move |args| {
-        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))? as u32;
+        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))?;
         let addr = parse_sockaddr(&args)?;
         pol.check(&addr)?;
         let sa: SockAddr = addr.into();
@@ -1164,7 +1164,7 @@ fn register_net_tools(
     let t = table.clone();
     let lp = listen_ports.cloned().map(Arc::new);
     tools.register("net_bind", move |args| {
-        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))? as u32;
+        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))?;
         let addr = parse_sockaddr(&args)?;
         match lp.as_ref() {
             Some(ports) => ports.check(addr.port())?,
@@ -1180,7 +1180,7 @@ fn register_net_tools(
     // net_listen
     let t = table.clone();
     tools.register("net_listen", move |args| {
-        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))? as u32;
+        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))?;
         let backlog = args["backlog"].as_i64().unwrap_or(128) as i32;
         let tbl = t.lock().unwrap();
         let sock = tbl.get_socket(fd)?;
@@ -1191,7 +1191,7 @@ fn register_net_tools(
     // net_accept
     let t = table.clone();
     tools.register("net_accept", move |args| {
-        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))? as u32;
+        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))?;
         let (new_sock, peer, parent_type) = {
             let tbl = t.lock().unwrap();
             let sock = tbl.get_socket(fd)?;
@@ -1212,7 +1212,7 @@ fn register_net_tools(
     // net_send
     let t = table.clone();
     tools.register("net_send", move |args| {
-        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))? as u32;
+        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))?;
         let data_b64 = args["data"]
             .as_str()
             .ok_or_else(|| anyhow!("missing 'data'"))?;
@@ -1229,7 +1229,7 @@ fn register_net_tools(
     let t = table.clone();
     let pol = policy.clone();
     tools.register("net_sendto", move |args| {
-        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))? as u32;
+        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))?;
         let data_b64 = args["data"]
             .as_str()
             .ok_or_else(|| anyhow!("missing 'data'"))?;
@@ -1248,7 +1248,7 @@ fn register_net_tools(
     // net_recv (alias for net_recvfrom with no addr returned for stream)
     let t = table.clone();
     tools.register("net_recv", move |args| {
-        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))? as u32;
+        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))?;
         let len = args["len"].as_u64().unwrap_or(4096) as usize;
         let mut buf = vec![std::mem::MaybeUninit::uninit(); len.min(65536)];
         let tbl = t.lock().unwrap();
@@ -1265,7 +1265,7 @@ fn register_net_tools(
     // net_recvfrom
     let t = table.clone();
     tools.register("net_recvfrom", move |args| {
-        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))? as u32;
+        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))?;
         let len = args["len"].as_u64().unwrap_or(4096) as usize;
         let mut buf = vec![0u8; len.min(65536)];
 
@@ -1290,7 +1290,7 @@ fn register_net_tools(
     // net_close
     let t = table.clone();
     tools.register("net_close", move |args| {
-        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))? as u32;
+        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))?;
         t.lock().unwrap().remove(fd)?;
         Ok(json!({}))
     });
@@ -1298,7 +1298,7 @@ fn register_net_tools(
     // net_shutdown
     let t = table.clone();
     tools.register("net_shutdown", move |args| {
-        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))? as u32;
+        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))?;
         let how = args["how"].as_i64().unwrap_or(2) as i32;
         let shutdown = match how {
             0 => std::net::Shutdown::Read,
@@ -1314,7 +1314,7 @@ fn register_net_tools(
     // net_setsockopt
     let t = table.clone();
     tools.register("net_setsockopt", move |args| {
-        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))? as u32;
+        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))?;
         let level = args["level"].as_i64().unwrap_or(0) as i32;
         let optname = args["optname"].as_i64().unwrap_or(0) as i32;
         let value = args["value"].as_i64().unwrap_or(0) as i32;
@@ -1338,7 +1338,7 @@ fn register_net_tools(
     // net_getsockopt
     let t = table.clone();
     tools.register("net_getsockopt", move |args| {
-        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))? as u32;
+        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))?;
         let level = args["level"].as_i64().unwrap_or(0) as i32;
         let optname = args["optname"].as_i64().unwrap_or(0) as i32;
         let tbl = t.lock().unwrap();
@@ -1359,7 +1359,7 @@ fn register_net_tools(
     // net_getpeername
     let t = table.clone();
     tools.register("net_getpeername", move |args| {
-        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))? as u32;
+        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))?;
         let tbl = t.lock().unwrap();
         let sock = tbl.get_socket(fd)?;
         let peer = sock.peer_addr()?;
@@ -1373,7 +1373,7 @@ fn register_net_tools(
     // net_getsockname
     let t = table.clone();
     tools.register("net_getsockname", move |args| {
-        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))? as u32;
+        let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))?;
         let tbl = t.lock().unwrap();
         let sock = tbl.get_socket(fd)?;
         let local = sock.local_addr()?;
