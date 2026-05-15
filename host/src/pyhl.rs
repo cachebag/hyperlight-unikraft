@@ -518,6 +518,8 @@ fn extract_via_oci_api(image: &str, src_path_in_image: &str, dst: &Path) -> Resu
         .call()
         .with_context(|| format!("fetch blob {digest}"))?
         .into_body()
+        .with_config()
+        .limit(512 * 1024 * 1024)
         .read_to_vec()?;
 
     let target_name = src_path_in_image.trim_start_matches('/');
