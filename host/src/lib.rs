@@ -830,7 +830,6 @@ impl FsSandbox {
         }
         Ok(out)
     }
-
 }
 
 /// Internal helper: assemble the final tool registry from caller-supplied
@@ -1187,7 +1186,11 @@ fn register_net_tools(
         } else if level == 6 && optname == 1 {
             sock.set_nodelay(value != 0)?;
         } else {
-            return Err(anyhow!("unsupported socket option: level={}, optname={}", level, optname));
+            return Err(anyhow!(
+                "unsupported socket option: level={}, optname={}",
+                level,
+                optname
+            ));
         }
         Ok(json!({}))
     });
@@ -1208,7 +1211,11 @@ fn register_net_tools(
         } else if level == 6 && optname == 1 {
             sock.nodelay()? as i32
         } else {
-            return Err(anyhow!("unsupported socket option: level={}, optname={}", level, optname));
+            return Err(anyhow!(
+                "unsupported socket option: level={}, optname={}",
+                level,
+                optname
+            ));
         };
         Ok(json!({ "value": val }))
     });
