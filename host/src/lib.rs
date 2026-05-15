@@ -1142,7 +1142,10 @@ fn register_net_tools(
             Some(Protocol::from(protocol))
         };
         let sock = Socket::new(domain, stype, proto)?;
-        let fd = t.lock().unwrap().insert(HostSocket::Socket(sock, sock_type));
+        let fd = t
+            .lock()
+            .unwrap()
+            .insert(HostSocket::Socket(sock, sock_type));
         Ok(json!({ "fd": fd }))
     });
 
@@ -1200,7 +1203,10 @@ fn register_net_tools(
             (s, p, st)
         };
         let peer_addr: Option<SocketAddr> = peer.as_socket();
-        let new_fd = t.lock().unwrap().insert(HostSocket::Socket(new_sock, parent_type));
+        let new_fd = t
+            .lock()
+            .unwrap()
+            .insert(HostSocket::Socket(new_sock, parent_type));
         let mut resp = json!({ "fd": new_fd });
         if let Some(pa) = peer_addr {
             resp["addr"] = json!(pa.ip().to_string());
