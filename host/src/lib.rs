@@ -1180,14 +1180,14 @@ fn register_net_tools(
         // SOL_SOCKET=1, SO_REUSEADDR=2
         if level == 1 && optname == 2 {
             sock.set_reuse_address(value != 0)?;
-        }
         // SOL_SOCKET=1, SO_KEEPALIVE=9
-        if level == 1 && optname == 9 {
+        } else if level == 1 && optname == 9 {
             sock.set_keepalive(value != 0)?;
-        }
         // IPPROTO_TCP=6, TCP_NODELAY=1
-        if level == 6 && optname == 1 {
+        } else if level == 6 && optname == 1 {
             sock.set_nodelay(value != 0)?;
+        } else {
+            return Err(anyhow!("unsupported socket option: level={}, optname={}", level, optname));
         }
         Ok(json!({}))
     });
@@ -1208,7 +1208,7 @@ fn register_net_tools(
         } else if level == 6 && optname == 1 {
             sock.nodelay()? as i32
         } else {
-            0
+            return Err(anyhow!("unsupported socket option: level={}, optname={}", level, optname));
         };
         Ok(json!({ "value": val }))
     });
