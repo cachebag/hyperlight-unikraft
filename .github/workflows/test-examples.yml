@@ -4,11 +4,6 @@ on:
   workflow_dispatch:
   pull_request:
     branches: [main]
-    paths:
-      - 'examples/**'
-      - 'runtimes/**'
-      - 'host/**'
-      - '.github/workflows/test-examples.yml'
   push:
     branches: [main]
     paths:

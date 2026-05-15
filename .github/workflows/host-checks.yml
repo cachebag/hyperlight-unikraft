@@ -4,9 +4,6 @@ on:
   workflow_dispatch:
   pull_request:
     branches: [main]
-    paths:
-      - 'host/**'
-      - '.github/workflows/host-checks.yml'
   push:
     branches: [main]
     paths:
