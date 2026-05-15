@@ -1038,7 +1038,7 @@ use std::net::SocketAddr;
 use std::sync::Mutex;
 
 enum HostSocket {
-    Socket(Socket),
+    Socket(Socket, i32),
 }
 
 struct SocketTable {
@@ -1069,7 +1069,13 @@ impl SocketTable {
 
     fn get_socket(&self, fd: u32) -> Result<&Socket> {
         match self.get(fd)? {
-            HostSocket::Socket(s) => Ok(s),
+            HostSocket::Socket(s, _) => Ok(s),
+        }
+    }
+
+    fn get_sock_type(&self, fd: u32) -> Result<i32> {
+        match self.get(fd)? {
+            HostSocket::Socket(_, t) => Ok(*t),
         }
     }
 
@@ -1136,7 +1142,7 @@ fn register_net_tools(
             Some(Protocol::from(protocol))
         };
         let sock = Socket::new(domain, stype, proto)?;
-        let fd = t.lock().unwrap().insert(HostSocket::Socket(sock));
+        let fd = t.lock().unwrap().insert(HostSocket::Socket(sock, sock_type));
         Ok(json!({ "fd": fd }))
     });
 
@@ -1186,13 +1192,15 @@ fn register_net_tools(
     let t = table.clone();
     tools.register("net_accept", move |args| {
         let fd = args["fd"].as_u64().ok_or_else(|| anyhow!("missing 'fd'"))? as u32;
-        let (new_sock, peer) = {
+        let (new_sock, peer, parent_type) = {
             let tbl = t.lock().unwrap();
             let sock = tbl.get_socket(fd)?;
-            sock.accept()?
+            let (s, p) = sock.accept()?;
+            let st = tbl.get_sock_type(fd)?;
+            (s, p, st)
         };
         let peer_addr: Option<SocketAddr> = peer.as_socket();
-        let new_fd = t.lock().unwrap().insert(HostSocket::Socket(new_sock));
+        let new_fd = t.lock().unwrap().insert(HostSocket::Socket(new_sock, parent_type));
         let mut resp = json!({ "fd": new_fd });
         if let Some(pa) = peer_addr {
             resp["addr"] = json!(pa.ip().to_string());
@@ -1336,8 +1344,8 @@ fn register_net_tools(
         let tbl = t.lock().unwrap();
         let sock = tbl.get_socket(fd)?;
         let val: i32 = if level == 1 && optname == 3 {
-            // SOL_SOCKET + SO_TYPE — all our sockets are SOCK_STREAM
-            1
+            // SOL_SOCKET + SO_TYPE — return the actual socket type
+            tbl.get_sock_type(fd)?
         } else if level == 1 && optname == 2 {
             sock.reuse_address()? as i32
         } else if level == 6 && optname == 1 {
