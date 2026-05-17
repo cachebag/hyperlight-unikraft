@@ -3487,4 +3487,15 @@ mod tests {
         assert_eq!(sock.read_timeout().unwrap(), Some(SOCKET_TIMEOUT));
         assert_eq!(sock.write_timeout().unwrap(), Some(SOCKET_TIMEOUT));
     }
+
+    #[test]
+    fn dns_read_name_rejects_circular_pointer() {
+        // Two compression pointers pointing at each other: offset 0 → 2, offset 2 → 0
+        let data = [0xC0, 0x02, 0xC0, 0x00];
+        let mut pos = 0usize;
+        assert!(
+            dns_read_name(&data, &mut pos).is_none(),
+            "circular DNS compression pointers should be rejected"
+        );
+    }
 }
