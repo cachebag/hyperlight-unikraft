@@ -197,7 +197,7 @@ impl Preopen {
         })
     }
 
-    /// Return a copy of this preopen with `read_only` set to `true`.
+    /// Mark this preopen as read-only.
     pub fn read_only(mut self) -> Self {
         self.read_only = true;
         self
@@ -1692,7 +1692,11 @@ impl FsRouter {
     fn new(preopens: &[Preopen]) -> Result<Self> {
         let mut entries = Vec::with_capacity(preopens.len());
         for p in preopens {
-            entries.push((p.guest_path.clone(), FsSandbox::new(&p.host_dir)?, p.read_only));
+            entries.push((
+                p.guest_path.clone(),
+                FsSandbox::new(&p.host_dir)?,
+                p.read_only,
+            ));
         }
         // Sort by descending prefix length so longer matches win (e.g.
         // /data/public should match before /data).
@@ -1720,7 +1724,7 @@ impl FsRouter {
     fn require_writable<'a>(&'a self, path: &'a str) -> Result<(&'a FsSandbox, &'a str)> {
         let (fs, rel, ro) = self.route(path)?;
         if ro {
-            return Err(anyhow!("read-only mount: write to {:?} denied", path));
+            return Err(anyhow!("read-only mount: write to {} denied", path));
         }
         Ok((fs, rel))
     }
@@ -3111,7 +3115,10 @@ mod tests {
         let s = std::str::from_utf8(&resp).unwrap();
         assert!(s.contains("\"error\""), "{s}");
         assert!(s.contains("read-only mount"), "{s}");
-        assert!(root.join("victim.txt").exists(), "file should not be deleted");
+        assert!(
+            root.join("victim.txt").exists(),
+            "file should not be deleted"
+        );
     }
 
     #[test]
