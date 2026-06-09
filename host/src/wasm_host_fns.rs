@@ -61,16 +61,17 @@ impl WasmToolOptions {
         }
 
         let mut merged_env = Vec::with_capacity(env.len() + inherit_env.len());
-        for spec in env {
-            merged_env.push(parse_env_pair(spec)?);
-        }
         for key in inherit_env {
             if key.is_empty() {
                 bail!("--tool-wasi-env-inherit key must not be empty");
             }
             let value = std::env::var(key)
                 .with_context(|| format!("inherit environment variable {key}"))?;
-            merged_env.push((key.clone(), value));
+            set_env_pair(&mut merged_env, key.clone(), value);
+        }
+        for spec in env {
+            let (key, value) = parse_env_pair(spec)?;
+            set_env_pair(&mut merged_env, key, value);
         }
 
         Ok(Self {
@@ -134,7 +135,7 @@ impl WasmTool {
     }
 
     pub fn invoke(&self, args: Value) -> Result<Value> {
-        let request = serde_json::json!({ "name": self.name, "args": args });
+        let request = serde_json::json!({ "name": &self.name, "args": args });
         let stdin = serde_json::to_vec(&request)?;
         let stdout = MemoryOutputPipe::new(self.options.output_limit);
         let stderr = MemoryOutputPipe::new(self.options.output_limit);
@@ -214,7 +215,7 @@ impl WasmTool {
             Ok(value) => Ok(value),
             Err(err) if stdout_len >= self.options.output_limit => Err(err).with_context(|| {
                 format!(
-                    "Wasm tool {} stdout reached output limit of {} bytes",
+                    "Wasm tool {} stdout may have reached output limit of {} bytes",
                     self.name, self.options.output_limit
                 )
             }),
@@ -228,6 +229,7 @@ fn parse_tool_spec(spec: &str) -> Result<(String, PathBuf)> {
         .split_once('=')
         .ok_or_else(|| anyhow!("--tool must use NAME=WASM syntax: {spec}"))?;
     let name = name.trim();
+    let path = path.trim();
     if name.is_empty() {
         bail!("--tool name must not be empty: {spec}");
     }
@@ -244,10 +246,15 @@ fn parse_wasi_dir(spec: &str, read_only: bool) -> Result<WasiDir> {
     let (host, guest) = if let Some(idx) = spec.rfind(':') {
         let (host, guest) = spec.split_at(idx);
         let guest = &guest[1..];
-        if guest.starts_with('/') || guest == "." || guest.starts_with("./") {
+        if is_windows_drive_path(spec, idx) {
+            (spec, "/host")
+        } else if guest.starts_with('/') || guest == "." || guest.starts_with("./") {
             (host, guest)
         } else {
-            (spec, "/host")
+            bail!(
+                "invalid WASI preopen guest path {:?}: expected absolute path, '.', or './path'",
+                guest
+            );
         }
     } else {
         (spec, "/host")
@@ -277,6 +284,31 @@ fn parse_env_pair(spec: &str) -> Result<(String, String)> {
         bail!("--tool-wasi-env key must not be empty: {spec}");
     }
     Ok((key.to_string(), value.to_string()))
+}
+
+fn set_env_pair(env: &mut Vec<(String, String)>, key: String, value: String) {
+    if let Some((_, existing)) = env
+        .iter_mut()
+        .find(|(existing_key, _)| existing_key == &key)
+    {
+        *existing = value;
+    } else {
+        env.push((key, value));
+    }
+}
+
+fn is_windows_drive_path(spec: &str, colon_idx: usize) -> bool {
+    colon_idx == 1
+        && spec
+            .as_bytes()
+            .first()
+            .map(|b| b.is_ascii_alphabetic())
+            .unwrap_or(false)
+        && spec
+            .as_bytes()
+            .get(2)
+            .map(|b| *b == b'/' || *b == b'\\')
+            .unwrap_or(false)
 }
 
 fn pipe_text(pipe: &MemoryOutputPipe) -> String {
@@ -790,7 +822,7 @@ mod tests {
 
     #[test]
     fn parse_tool_spec_accepts_valid_name_and_path() {
-        let (name, path) = parse_tool_spec("greet=./handler.wasm").unwrap();
+        let (name, path) = parse_tool_spec(" greet = ./handler.wasm ").unwrap();
         assert_eq!(name, "greet");
         assert_eq!(path, PathBuf::from("./handler.wasm"));
     }
@@ -805,6 +837,7 @@ mod tests {
             "fs_read=handler.wasm",
             "net_socket=handler.wasm",
             "greet=",
+            "greet=   ",
         ] {
             assert!(parse_tool_spec(spec).is_err(), "{spec} should fail");
         }
@@ -848,6 +881,27 @@ mod tests {
     }
 
     #[test]
+    fn cli_options_use_last_explicit_env_value_for_duplicate_keys() {
+        let opts = WasmToolOptions::from_cli(
+            &[],
+            &[],
+            &[
+                "A=first".to_string(),
+                "B=only".to_string(),
+                "A=second".to_string(),
+            ],
+            &[],
+            1,
+            1,
+        )
+        .unwrap();
+        assert_eq!(
+            opts.env,
+            vec![("A".into(), "second".into()), ("B".into(), "only".into())]
+        );
+    }
+
+    #[test]
     fn cli_options_reject_invalid_values() {
         let dir = tempdir("invalid-options");
         assert!(WasmToolOptions::from_cli(&[], &[], &[], &[], 0, 1).is_err());
@@ -857,6 +911,15 @@ mod tests {
         );
         assert!(WasmToolOptions::from_cli(&[], &[], &["=value".to_string()], &[], 1, 1).is_err());
         assert!(WasmToolOptions::from_cli(&[], &[], &[], &["".to_string()], 1, 1).is_err());
+        assert!(WasmToolOptions::from_cli(
+            &[format!("{}:relative", dir.display())],
+            &[],
+            &[],
+            &[],
+            1,
+            1,
+        )
+        .is_err());
         assert!(WasmToolOptions::from_cli(
             &[
                 format!("{}:/dup", dir.display()),
@@ -1051,7 +1114,7 @@ mod tests {
         );
         let err = tool.invoke(json!({})).unwrap_err();
         let msg = err_string(err);
-        assert!(msg.contains("stdout reached output limit of 8 bytes"));
+        assert!(msg.contains("stdout may have reached output limit of 8 bytes"));
         assert!(msg.contains("wrote non-JSON stdout"));
     }
 
