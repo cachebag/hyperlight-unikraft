@@ -15,7 +15,7 @@ Implementation lives in [`host/src/lib.rs`](../host/src/lib.rs). Guest-side call
 | `fs_*` tools | **Off** | `--mount HOST[:GUEST]` (repeatable) |
 | `net_*` tools | **Off** | `--net`, `--net-allow`, or `--net-block` |
 | Inbound listen | **Off** | `--port PORT` (requires network enabled) |
-| Custom tools | **Off** | `--enable-tools`, `--tool NAME=WASM` with `wasm-host-fns`, or `SandboxBuilder::tool()` |
+| Custom tools | **Off** | `--tool NAME=WASM` with `wasm-host-fns`, `SandboxBuilder::tool()`, or legacy/demo `--enable-tools` echo |
 
 With **no flags**, the guest cannot reach the host filesystem or network through dispatch. Only internal plumbing (`__hl_exit`, `__hl_sleep`) is wired.
 
@@ -85,14 +85,18 @@ hyperlight-unikraft KERNEL [--initrd CPIO] [options] [-- APP_ARGS...]
 | `--net-allow HOST_OR_IP` | Allow-list outbound destinations (implies `--net`). Repeatable. |
 | `--net-block HOST_OR_IP` | Block-list; all other destinations allowed (implies `--net`). Mutually exclusive with `--net-allow`. |
 | `--port PORT` | Allow `net_bind` / listen on `PORT` (implies `--net`). Without `--port`, outbound-only: bind is rejected. |
-| `--enable-tools` | Registers a built-in `echo` tool (used by the `python-tools` example). Library users add their own tools via `SandboxBuilder::tool()`. |
-| `--tool NAME=WASM` | With the Cargo feature `wasm-host-fns`, registers `WASM` as a WASIp1 custom tool named `NAME`. Repeatable. |
-| `--tool-wasi-dir HOST[:GUEST]` | Preopens a read-write host directory for all Wasm tools. Default guest path is `/host`. Repeatable. |
-| `--tool-wasi-dir-ro HOST[:GUEST]` | Preopens a read-only host directory for all Wasm tools. Default guest path is `/host`. Repeatable. |
-| `--tool-wasi-env KEY=VALUE` | Sets an environment variable for all Wasm tools. Repeatable. |
-| `--tool-wasi-env-inherit KEY` | Copies one host environment variable into all Wasm tools. Repeatable. |
-| `--tool-wasi-fuel FUEL` | Sets the instruction-fuel budget for each Wasm tool call. Default `100000000`. |
-| `--tool-wasi-output-limit SIZE` | Caps captured stdout and stderr per Wasm tool call. Default `1Mi`. |
+| `--enable-tools` | Registers only the built-in `echo` demo tool. It does not load user code; prefer `--tool NAME=WASM` for CLI custom tools or `SandboxBuilder::tool()` for library users. |
+| `--tool NAME=WASM` | With the Cargo feature `wasm-host-fns`, registers `WASM` as a host-side WASIp1 custom tool named `NAME`. Repeatable. |
+| `--tool-wasi-dir HOST[:GUEST]` | Preopens a read-write host directory for every CLI Wasm tool. Default guest path is `/host`. Repeatable. |
+| `--tool-wasi-dir-ro HOST[:GUEST]` | Preopens a read-only host directory for every CLI Wasm tool. Default guest path is `/host`. Repeatable. |
+| `--tool-wasi-env KEY=VALUE` | Sets an environment variable for every CLI Wasm tool. Repeatable. |
+| `--tool-wasi-env-inherit KEY` | Copies one host environment variable into every CLI Wasm tool. Repeatable. |
+| `--tool-wasi-fuel FUEL` | Sets the instruction-fuel budget for each call to every CLI Wasm tool. Default `100000000`. |
+| `--tool-wasi-output-limit SIZE` | Caps captured stdout and stderr for each call to every CLI Wasm tool. Default `1Mi`. |
+
+`--tool-wasi-*` flags configure the Wasmtime/WASI sandbox for Wasm custom tools only. They do not expose the guest `--mount` filesystem, and they do not change the `fs_*` handlers used by `lib/hostfs`.
+
+The CLI currently applies the same Wasm filesystem, environment, fuel, and output settings to every `--tool` registered in one invocation. If tools need different permissions or limits, do not grant the union to all handlers; that requires a narrower per-tool configuration surface or a separate host integration.
 
 **Mount rules (host-enforced before boot):**
 
@@ -196,7 +200,7 @@ Sockets are host-side (`socket2`); the guest sees opaque numeric **`fd`** handle
 
 ## Custom tools
 
-**CLI built-in:** `--enable-tools` registers a built-in `echo` tool (returns `args` unchanged) used by the [`python-tools` example](../examples/python-tools).
+**CLI demo tool:** `--enable-tools` registers only a built-in `echo` tool that returns `args` unchanged. It is useful as a smoke test and compatibility path, but it is not the CLI extension mechanism for user-provided host functions. CLI examples should prefer a Wasm `echo.wasm` registered with `--tool echo=...`; library examples should register an echo handler with `SandboxBuilder::tool()`.
 
 **CLI Wasm tools:** build with the optional feature and pass one or more `--tool` flags:
 
@@ -223,7 +227,11 @@ The handler writes JSON to stdout. It may write either a raw JSON result value o
 
 A raw value is treated as the tool result. A single-key `result` envelope is unwrapped. A single-key `error` envelope becomes the outer `__dispatch` error response. Empty stdout returns JSON null.
 
-WASI capabilities are denied by default except stdio used for the protocol, clocks, and random. Use `--tool-wasi-dir`, `--tool-wasi-dir-ro`, `--tool-wasi-env`, and `--tool-wasi-env-inherit` to grant explicit filesystem and environment access to handlers. Tool names beginning with `__`, `fs_`, or `net_` are reserved.
+Wasm tools are separate from the built-in `fs_*` and `net_*` dispatch handlers. `--mount` controls what the guest can access through `lib/hostfs`; `--tool-wasi-dir*` controls what the host-side Wasm handler can access through its own WASI filesystem view.
+
+WASI capabilities are denied by default except stdio used for the protocol, clocks, and random. Use `--tool-wasi-dir`, `--tool-wasi-dir-ro`, `--tool-wasi-env`, and `--tool-wasi-env-inherit` to grant explicit filesystem and environment access to handlers. These grants and the `--tool-wasi-fuel` / `--tool-wasi-output-limit` settings apply to every CLI Wasm tool registered by the process. Tool names beginning with `__`, `fs_`, or `net_` are reserved.
+
+**Why WASIp1 command modules today?** The current CLI maps one `--tool NAME=WASM` flag to one tool name and one fresh handler invocation. WASIp1 keeps that ABI small: JSON request on stdin, JSON response on stdout, no long-lived reactor state, and broad language/toolchain support. Component-model or reactor-style handlers could support a future `--tools component.wasm` shape with multiple exported tools and auto-registration, but that would need a separate registration and lifecycle model; it is not the current ABI.
 
 **Library:**
 
@@ -233,7 +241,7 @@ Sandbox::builder("kernel")
     .build()?;
 ```
 
-Custom handlers run with the same JSON request/response envelope as built-in tools.
+`SandboxBuilder::tool()` handlers receive the inner `args` JSON value from the dispatch request; the registry has already matched the outer `name`. Handler return values become the `result` field in the outer `__dispatch` response, and handler errors become `{"error": "..."}`.
 
 ---
 
@@ -248,8 +256,8 @@ Custom handlers run with the same JSON request/response envelope as built-in too
 | `fs_list` entries | 100 000 |
 | `net_send` / `net_sendto` | 1 MiB decoded bytes |
 | `__hl_sleep` | 60 s |
-| Wasm tool fuel | 100 000 000 instructions per call by default; configurable with `--tool-wasi-fuel` |
-| Wasm tool stdout / stderr | 1 MiB each per call by default; configurable with `--tool-wasi-output-limit` |
+| Wasm tool fuel | 100 000 000 instructions per call by default; configurable with `--tool-wasi-fuel`; same value applies to every CLI Wasm tool |
+| Wasm tool stdout / stderr | 1 MiB each per call by default; configurable with `--tool-wasi-output-limit`; same value applies to every CLI Wasm tool |
 | Open host sockets | 1024 per sandbox |
 | AllowList learned DNS IPs | 256 |
 
@@ -282,6 +290,7 @@ Custom handlers run with the same JSON request/response envelope as built-in too
 
 - Handler code runs on the host inside Wasmtime, not inside the Unikraft VM.
 - WASI filesystem and environment access are capability-based and off unless explicitly granted with `--tool-wasi-*` flags.
+- CLI Wasm capability and limit flags apply to every registered Wasm tool; avoid combining handlers with different privilege needs in one invocation.
 - Fuel limits bound Wasm instruction execution, but do not turn filesystem operations into a full wall-clock timeout.
 - Handlers are untrusted code from the host operator's filesystem; only load modules you intend to grant these capabilities to.
 
