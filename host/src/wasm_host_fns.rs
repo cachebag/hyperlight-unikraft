@@ -344,23 +344,13 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::fs;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use tempfile::TempDir;
 
-    static TMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-    fn tempdir(label: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let count = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "hl-wasm-tools-{label}-{}-{nanos}-{count}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&dir).unwrap();
-        dir
+    fn tempdir(label: &str) -> TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!("hl-wasm-tools-{label}-"))
+            .tempdir()
+            .unwrap()
     }
 
     fn default_options() -> WasmToolOptions {
@@ -373,7 +363,7 @@ mod tests {
 
     fn load_tool(name: &str, wasm: Vec<u8>, options: WasmToolOptions) -> WasmTool {
         let dir = tempdir(name);
-        let path = dir.join(format!("{name}.wasm"));
+        let path = dir.path().join(format!("{name}.wasm"));
         fs::write(&path, wasm).unwrap();
         let specs = vec![format!("{name}={}", path.display())];
         let mut tools = WasmTool::load_all(&specs, &options).unwrap();
@@ -848,8 +838,8 @@ mod tests {
         let rw = tempdir("rw");
         let ro = tempdir("ro");
         let opts = WasmToolOptions::from_cli(
-            &[format!("{}:/rw", rw.display())],
-            &[format!("{}:/ro", ro.display())],
+            &[format!("{}:/rw", rw.path().display())],
+            &[format!("{}:/ro", ro.path().display())],
             &["A=B".to_string(), "EMPTY=".to_string()],
             &[],
             123,
@@ -864,10 +854,10 @@ mod tests {
             vec![("A".into(), "B".into()), ("EMPTY".into(), "".into())]
         );
         assert_eq!(opts.dirs.len(), 2);
-        assert_eq!(opts.dirs[0].host, fs::canonicalize(&rw).unwrap());
+        assert_eq!(opts.dirs[0].host, fs::canonicalize(rw.path()).unwrap());
         assert_eq!(opts.dirs[0].guest, "/rw");
         assert!(!opts.dirs[0].read_only);
-        assert_eq!(opts.dirs[1].host, fs::canonicalize(&ro).unwrap());
+        assert_eq!(opts.dirs[1].host, fs::canonicalize(ro.path()).unwrap());
         assert_eq!(opts.dirs[1].guest, "/ro");
         assert!(opts.dirs[1].read_only);
     }
@@ -876,7 +866,8 @@ mod tests {
     fn cli_options_default_wasi_guest_path_to_host() {
         let dir = tempdir("default-guest");
         let opts =
-            WasmToolOptions::from_cli(&[dir.display().to_string()], &[], &[], &[], 1, 1).unwrap();
+            WasmToolOptions::from_cli(&[dir.path().display().to_string()], &[], &[], &[], 1, 1)
+                .unwrap();
         assert_eq!(opts.dirs[0].guest, "/host");
     }
 
@@ -912,7 +903,7 @@ mod tests {
         assert!(WasmToolOptions::from_cli(&[], &[], &["=value".to_string()], &[], 1, 1).is_err());
         assert!(WasmToolOptions::from_cli(&[], &[], &[], &["".to_string()], 1, 1).is_err());
         assert!(WasmToolOptions::from_cli(
-            &[format!("{}:relative", dir.display())],
+            &[format!("{}:relative", dir.path().display())],
             &[],
             &[],
             &[],
@@ -922,8 +913,8 @@ mod tests {
         .is_err());
         assert!(WasmToolOptions::from_cli(
             &[
-                format!("{}:/dup", dir.display()),
-                format!("{}:/dup", dir.display())
+                format!("{}:/dup", dir.path().display()),
+                format!("{}:/dup", dir.path().display())
             ],
             &[],
             &[],
@@ -987,9 +978,9 @@ mod tests {
     #[test]
     fn load_all_rejects_duplicate_names_invalid_wasm_and_unknown_imports() {
         let dir = tempdir("load-errors");
-        let ok = dir.join("ok.wasm");
-        let bad = dir.join("bad.wasm");
-        let unknown = dir.join("unknown.wasm");
+        let ok = dir.path().join("ok.wasm");
+        let bad = dir.path().join("bad.wasm");
+        let unknown = dir.path().join("unknown.wasm");
         fs::write(&ok, no_output_module()).unwrap();
         fs::write(&bad, b"not wasm").unwrap();
         fs::write(&unknown, unknown_import_module()).unwrap();
@@ -1037,10 +1028,10 @@ mod tests {
     #[test]
     fn invoke_can_read_explicit_read_only_preopen() {
         let root = tempdir("preopen-read");
-        fs::write(root.join("answer.json"), br#"{"result":"file-ok"}"#).unwrap();
+        fs::write(root.path().join("answer.json"), br#"{"result":"file-ok"}"#).unwrap();
         let options = WasmToolOptions::from_cli(
             &[],
-            &[format!("{}:.", root.display())],
+            &[format!("{}:.", root.path().display())],
             &[],
             &[],
             1_000_000,
