@@ -42,10 +42,6 @@ struct Args {
     #[arg(long, short = 'q')]
     quiet: bool,
 
-    /// Enable tool dispatch via __dispatch host function
-    #[arg(long)]
-    enable_tools: bool,
-
     #[cfg(feature = "wasm-host-fns")]
     #[arg(
         long = "tool",
@@ -300,11 +296,6 @@ fn main() -> Result<()> {
                 output_limit,
             )?;
             let tools = wasm_host_fns::WasmTool::load_all(&args.tool, &options)?;
-            if args.enable_tools && tools.iter().any(|tool| tool.name() == "echo") {
-                return Err(anyhow::anyhow!(
-                    "--tool echo=... conflicts with --enable-tools built-in echo"
-                ));
-            }
             if !args.quiet {
                 for tool in &tools {
                     eprintln!("Tool: {} -> {}", tool.name(), tool.path().display());
@@ -329,9 +320,6 @@ fn main() -> Result<()> {
     }
     if let Some(ports) = listen_ports {
         builder = builder.listen_ports(ports);
-    }
-    if args.enable_tools {
-        builder = builder.tool("echo", Ok);
     }
     #[cfg(feature = "wasm-host-fns")]
     for tool in wasm_tools {
