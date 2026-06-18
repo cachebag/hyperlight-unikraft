@@ -1635,18 +1635,27 @@ fn handle_net_poll(
         .get("fds")
         .and_then(|v| v.as_array())
         .ok_or_else(|| anyhow!("net_poll: missing 'fds' array"))?;
-    let timeout_ms = args.get("timeout_ms").and_then(|v| v.as_i64()).unwrap_or(0) as libc::c_int;
+    let timeout_ms = args
+        .get("timeout_ms")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0)
+        .clamp(0, libc::c_int::MAX as i64) as libc::c_int;
 
     let tbl = table.lock().unwrap();
     let mut pollfds: Vec<libc::pollfd> = Vec::new();
     let mut guest_fds: Vec<u64> = Vec::new();
+    let mut ready = Vec::new();
 
     for entry in fds_val {
         let fd = entry
             .get("fd")
             .and_then(|v| v.as_u64())
             .ok_or_else(|| anyhow!("net_poll: entry missing 'fd'"))?;
-        let events = entry.get("events").and_then(|v| v.as_i64()).unwrap_or(0) as i16;
+        let raw_events = entry.get("events").and_then(|v| v.as_i64()).unwrap_or(0);
+        if !(0..=i16::MAX as i64).contains(&raw_events) {
+            return Err(anyhow!("net_poll: events {raw_events} out of i16 range"));
+        }
+        let events = raw_events as i16;
         if let Ok(sock) = tbl.get_socket(fd) {
             pollfds.push(libc::pollfd {
                 fd: sock.as_raw_fd(),
@@ -1654,15 +1663,17 @@ fn handle_net_poll(
                 revents: 0,
             });
             guest_fds.push(fd);
+        } else {
+            ready.push(json!({ "fd": fd, "revents": libc::POLLNVAL as i64 }));
         }
     }
     drop(tbl);
 
     if pollfds.is_empty() {
-        return Ok(json!({"ready": []}));
+        return Ok(json!({"ready": ready}));
     }
 
-    let _ret = unsafe {
+    let ret = unsafe {
         libc::poll(
             pollfds.as_mut_ptr(),
             pollfds.len() as libc::nfds_t,
@@ -1670,7 +1681,13 @@ fn handle_net_poll(
         )
     };
 
-    let mut ready = Vec::new();
+    if ret < 0 {
+        let err = std::io::Error::last_os_error();
+        if err.raw_os_error() != Some(libc::EINTR) {
+            return Err(anyhow!("net_poll: poll() failed: {err}"));
+        }
+    }
+
     for (i, pfd) in pollfds.iter().enumerate() {
         if pfd.revents != 0 {
             ready.push(json!({
@@ -1718,6 +1735,13 @@ fn hl_sleep_poll_sockets(
             timeout_ms,
         )
     };
+
+    if ret < 0 {
+        let err = std::io::Error::last_os_error();
+        if err.raw_os_error() != Some(libc::EINTR) {
+            return Err(anyhow!("hl_sleep poll failed: {err}"));
+        }
+    }
 
     Ok(json!({"socket_ready": ret > 0}))
 }

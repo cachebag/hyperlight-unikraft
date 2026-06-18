@@ -9,6 +9,10 @@ that reject missing interpreters will load the binary directly.
 import struct
 import sys
 
+if len(sys.argv) != 2:
+    print(f"Usage: {sys.argv[0]} <elf-binary>", file=sys.stderr)
+    sys.exit(1)
+
 path = sys.argv[1]
 with open(path, "rb") as f:
     data = bytearray(f.read())
