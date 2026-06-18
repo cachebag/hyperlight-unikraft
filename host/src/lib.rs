@@ -1705,7 +1705,47 @@ fn handle_net_poll(
 ) -> Result<serde_json::Value> {
     use serde_json::json;
     use std::os::windows::io::AsRawSocket;
-    use windows_sys::Win32::Networking::WinSock::{WSAPoll, POLLNVAL, WSAPOLLFD};
+    use windows_sys::Win32::Networking::WinSock::{
+        WSAPoll, POLLERR as W_POLLERR, POLLHUP as W_POLLHUP, POLLNVAL as W_POLLNVAL, POLLRDNORM,
+        POLLWRNORM, WSAPOLLFD,
+    };
+
+    const POSIX_POLLIN: i16 = 0x0001;
+    const POSIX_POLLOUT: i16 = 0x0004;
+    const POSIX_POLLERR: i16 = 0x0008;
+    const POSIX_POLLHUP: i16 = 0x0010;
+    const POSIX_POLLNVAL: i16 = 0x0020;
+
+    fn posix_to_win(posix: i16) -> i16 {
+        let mut win: i16 = 0;
+        if posix & POSIX_POLLIN != 0 {
+            win |= POLLRDNORM;
+        }
+        if posix & POSIX_POLLOUT != 0 {
+            win |= POLLWRNORM;
+        }
+        win
+    }
+
+    fn win_to_posix(win: i16) -> i16 {
+        let mut posix: i16 = 0;
+        if win & POLLRDNORM != 0 {
+            posix |= POSIX_POLLIN;
+        }
+        if win & POLLWRNORM != 0 {
+            posix |= POSIX_POLLOUT;
+        }
+        if win & W_POLLERR != 0 {
+            posix |= POSIX_POLLERR;
+        }
+        if win & W_POLLHUP != 0 {
+            posix |= POSIX_POLLHUP;
+        }
+        if win & W_POLLNVAL != 0 {
+            posix |= POSIX_POLLNVAL;
+        }
+        posix
+    }
 
     let fds_val = args
         .get("fds")
@@ -1731,7 +1771,7 @@ fn handle_net_poll(
         if !(0..=i16::MAX as i64).contains(&raw_events) {
             return Err(anyhow!("net_poll: events {raw_events} out of i16 range"));
         }
-        let events = raw_events as i16;
+        let events = posix_to_win(raw_events as i16);
         if let Ok(sock) = tbl.get_socket(fd) {
             pollfds.push(WSAPOLLFD {
                 fd: sock.as_raw_socket() as usize,
@@ -1740,7 +1780,7 @@ fn handle_net_poll(
             });
             guest_fds.push(fd);
         } else {
-            ready.push(json!({ "fd": fd, "revents": POLLNVAL as i64 }));
+            ready.push(json!({ "fd": fd, "revents": POSIX_POLLNVAL as i64 }));
         }
     }
     drop(tbl);
@@ -1760,7 +1800,7 @@ fn handle_net_poll(
         if pfd.revents != 0 {
             ready.push(json!({
                 "fd": guest_fds[i],
-                "revents": pfd.revents as i64,
+                "revents": win_to_posix(pfd.revents) as i64,
             }));
         }
     }
