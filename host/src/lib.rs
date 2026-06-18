@@ -1635,10 +1635,7 @@ fn handle_net_poll(
         .get("fds")
         .and_then(|v| v.as_array())
         .ok_or_else(|| anyhow!("net_poll: missing 'fds' array"))?;
-    let timeout_ms = args
-        .get("timeout_ms")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0) as libc::c_int;
+    let timeout_ms = args.get("timeout_ms").and_then(|v| v.as_i64()).unwrap_or(0) as libc::c_int;
 
     let tbl = table.lock().unwrap();
     let mut pollfds: Vec<libc::pollfd> = Vec::new();
@@ -1649,10 +1646,7 @@ fn handle_net_poll(
             .get("fd")
             .and_then(|v| v.as_u64())
             .ok_or_else(|| anyhow!("net_poll: entry missing 'fd'"))?;
-        let events = entry
-            .get("events")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0) as i16;
+        let events = entry.get("events").and_then(|v| v.as_i64()).unwrap_or(0) as i16;
         if let Ok(sock) = tbl.get_socket(fd) {
             pollfds.push(libc::pollfd {
                 fd: sock.as_raw_fd(),
@@ -1716,7 +1710,7 @@ fn hl_sleep_poll_sockets(
         return Ok(json!({}));
     }
 
-    let timeout_ms = ((ns / 1_000_000) as libc::c_int).max(1).min(30_000);
+    let timeout_ms = ((ns / 1_000_000) as libc::c_int).clamp(1, 30_000);
     let ret = unsafe {
         libc::poll(
             pollfds.as_mut_ptr(),
