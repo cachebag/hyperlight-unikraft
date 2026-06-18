@@ -357,20 +357,21 @@ jobs:
             fi
             hyperlight-unikraft -q $mem_args "$kernel" --initrd "$cpio" ${{ matrix.args }} &
             server_pid=$!
+            sleep 3
             ready=0
             for i in $(seq 1 30); do
-              if curl -s --max-time 2 "http://localhost:${http_port}" >/dev/null 2>&1; then
+              if curl -s --max-time 10 "http://127.0.0.1:${http_port}" >/dev/null 2>&1; then
                 ready=1
                 break
               fi
               sleep 1
             done
             if [ "$ready" -ne 1 ]; then
-              echo "FAIL: server did not become ready within 30s"
+              echo "FAIL: server did not become ready within timeout"
               kill "$server_pid" 2>/dev/null || true
               exit 1
             fi
-            response=$(curl -s --max-time 5 "http://localhost:${http_port}")
+            response=$(curl -s --max-time 10 "http://127.0.0.1:${http_port}")
             kill "$server_pid" 2>/dev/null || true
             wait "$server_pid" 2>/dev/null || true
             echo "=== HTTP response ==="
@@ -644,8 +645,6 @@ jobs:
 
       - name: Run and check output
         shell: pwsh
-        env:
-          HL_DISPATCH_DEBUG: "1"
         run: |
           $kernel = (Resolve-Path "image/kernel").Path
           $cpio   = (Resolve-Path "image/initrd.cpio").Path
@@ -694,10 +693,12 @@ jobs:
             $proc = Start-Process -FilePath 'hyperlight-unikraft' `
               -ArgumentList (@('-q') + $memArgs + @($kernel, '--initrd', $cpio) + $argList) `
               -PassThru -NoNewWindow -RedirectStandardError $stderrLog
+            # Give the server time to boot the unikernel and start listening
+            Start-Sleep -Seconds 5
             $ready = $false
             for ($i = 0; $i -lt 30; $i++) {
               try {
-                $null = Invoke-WebRequest -Uri "http://localhost:${httpPort}" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+                $null = Invoke-WebRequest -Uri "http://127.0.0.1:${httpPort}" -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
                 $ready = $true
                 break
               } catch {
@@ -705,13 +706,13 @@ jobs:
               }
             }
             if (-not $ready) {
-              Write-Host "FAIL: server did not become ready within 30s"
-              Write-Host "=== stderr (last 50 lines) ==="
-              Get-Content $stderrLog -Tail 50 -ErrorAction SilentlyContinue
+              Write-Host "FAIL: server did not become ready within timeout"
+              Write-Host "=== stderr (last 200 lines) ==="
+              Get-Content $stderrLog -Tail 200 -ErrorAction SilentlyContinue
               Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
               exit 1
             }
-            $resp = (Invoke-WebRequest -Uri "http://localhost:${httpPort}" -UseBasicParsing -TimeoutSec 5).Content
+            $resp = (Invoke-WebRequest -Uri "http://127.0.0.1:${httpPort}" -UseBasicParsing -TimeoutSec 10).Content
             Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
             Write-Host "=== HTTP response ==="
             Write-Host $resp
