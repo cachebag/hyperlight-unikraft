@@ -448,7 +448,8 @@ jobs:
           - python-agent-driver
           - powershell
           - networking-py
-          # go-http and dotnet-http excluded: no Windows runtime test for them
+          - go-http
+          - dotnet-http
     steps:
       - uses: actions/checkout@v4
 
@@ -600,8 +601,14 @@ jobs:
           - example: networking-py
             args: "--port 8080 -- /echo_server_test.py"
             expect: "SUCCESS: bind\\+listen on port 8080 allowed"
-          # go-http and dotnet-http are excluded from Windows: they need
-          # hl_sleep_poll_sockets (Unix-only) to wake the guest on I/O.
+          - example: go-http
+            args: "--port 8080 -- /bin/server"
+            expect: "Hello from Hyperlight-Unikraft!"
+            http_port: "8080"
+          - example: dotnet-http
+            args: "--port 8080 -- /app/KestrelHyperlight"
+            expect: "Hello from Kestrel on Hyperlight!"
+            http_port: "8080"
     steps:
       - uses: actions/checkout@v4
 
