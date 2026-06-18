@@ -644,6 +644,8 @@ jobs:
 
       - name: Run and check output
         shell: pwsh
+        env:
+          HL_DISPATCH_DEBUG: "1"
         run: |
           $kernel = (Resolve-Path "image/kernel").Path
           $cpio   = (Resolve-Path "image/initrd.cpio").Path
@@ -688,9 +690,10 @@ jobs:
             if ($memory -ne '') {
               $memArgs = @('-m', $memory)
             }
+            $stderrLog = Join-Path $env:RUNNER_TEMP 'hl-stderr.log'
             $proc = Start-Process -FilePath 'hyperlight-unikraft' `
               -ArgumentList (@('-q') + $memArgs + @($kernel, '--initrd', $cpio) + $argList) `
-              -PassThru -NoNewWindow
+              -PassThru -NoNewWindow -RedirectStandardError $stderrLog
             $ready = $false
             for ($i = 0; $i -lt 30; $i++) {
               try {
@@ -703,6 +706,8 @@ jobs:
             }
             if (-not $ready) {
               Write-Host "FAIL: server did not become ready within 30s"
+              Write-Host "=== stderr (last 50 lines) ==="
+              Get-Content $stderrLog -Tail 50 -ErrorAction SilentlyContinue
               Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
               exit 1
             }
