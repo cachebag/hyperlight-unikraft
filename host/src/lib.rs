@@ -1862,9 +1862,7 @@ fn hl_sleep_poll_sockets(
 ) -> Result<serde_json::Value> {
     use serde_json::json;
     use std::os::windows::io::AsRawSocket;
-    use windows_sys::Win32::Networking::WinSock::{
-        WSAPoll, POLLERR, POLLRDNORM, POLLWRNORM, WSAPOLLFD,
-    };
+    use windows_sys::Win32::Networking::WinSock::{WSAPoll, POLLRDNORM, POLLWRNORM, WSAPOLLFD};
 
     let tbl = table.lock().unwrap();
     let mut pollfds: Vec<WSAPOLLFD> = tbl
@@ -1872,7 +1870,8 @@ fn hl_sleep_poll_sockets(
         .values()
         .map(|hs| WSAPOLLFD {
             fd: hs.socket.as_raw_socket() as usize,
-            events: (POLLRDNORM | POLLWRNORM | POLLERR) as i16,
+            // POLLERR is output-only on Windows; setting it in events causes WSAEINVAL
+            events: (POLLRDNORM | POLLWRNORM) as i16,
             revents: 0,
         })
         .collect();
