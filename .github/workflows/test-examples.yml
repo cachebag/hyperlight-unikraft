@@ -712,7 +712,8 @@ jobs:
               Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
               exit 1
             }
-            $resp = (Invoke-WebRequest -Uri "http://127.0.0.1:${httpPort}" -UseBasicParsing -TimeoutSec 10).Content
+            $raw = (Invoke-WebRequest -Uri "http://127.0.0.1:${httpPort}" -UseBasicParsing -TimeoutSec 10).Content
+            if ($raw -is [byte[]]) { $resp = [System.Text.Encoding]::UTF8.GetString($raw) } else { $resp = $raw }
             Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
             Write-Host "=== HTTP response ==="
             Write-Host $resp
