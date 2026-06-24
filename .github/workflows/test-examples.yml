@@ -183,8 +183,9 @@ jobs:
             args: "-- /hello.py"
             expect: "Hello from Python on Hyperlight"
           - example: python-tools
-            args: "--enable-tools -- /test_tools.py"
+            args: "-- /test_tools.py"
             expect: "Tool returned"
+            needs_echo_tool: true
           - example: nodejs
             args: "-- /app/hello.js"
             expect: "Hello from Node.js on Hyperlight"
@@ -270,8 +271,14 @@ jobs:
         if: steps.kvm_check.outputs.available == 'true'
         run: |
           cd host
-          cargo build --release --bin hyperlight-unikraft --bin multifn-test --bin pydriver-run
+          cargo build --release --features wasm-host-fns --bin hyperlight-unikraft --bin multifn-test --bin pydriver-run
           sudo cp target/release/hyperlight-unikraft /usr/local/bin/
+
+      - name: Build echo Wasm host function
+        if: steps.kvm_check.outputs.available == 'true' && matrix.needs_echo_tool == true
+        run: |
+          rustup target add wasm32-wasip1
+          cargo build --manifest-path examples/echo-wasm-host-fxn/Cargo.toml --release --target wasm32-wasip1
 
       - name: Build local-python-base images (python-agent-driver only)
         if: steps.kvm_check.outputs.available == 'true' && matrix.example == 'python-agent-driver'
@@ -338,6 +345,10 @@ jobs:
             mkdir -p "$mount_dir"
             mount_args="--mount $mount_dir:/host"
           fi
+          tool_args=""
+          if [ "${{ matrix.needs_echo_tool }}" = "true" ]; then
+            tool_args="--tool echo=../echo-wasm-host-fxn/target/wasm32-wasip1/release/echo-wasm-host-fxn.wasm"
+          fi
           case "${{ matrix.driver }}" in
             multifn-test)
               cmd=(timeout 60 /home/runner/work/hyperlight-unikraft/hyperlight-unikraft/host/target/release/multifn-test "$kernel" "$cpio")
@@ -350,7 +361,7 @@ jobs:
               if [ -n "$memory" ]; then
                 mem_args="-m $memory"
               fi
-              cmd=(timeout 120 hyperlight-unikraft -q $mem_args "$kernel" --initrd "$cpio" $mount_args ${{ matrix.args }})
+              cmd=(timeout 120 hyperlight-unikraft -q $mem_args "$kernel" --initrd "$cpio" $mount_args $tool_args ${{ matrix.args }})
               ;;
           esac
           set +e
@@ -514,8 +525,9 @@ jobs:
             args: "-- /hello.py"
             expect: "Hello from Python on Hyperlight"
           - example: python-tools
-            args: "--enable-tools -- /test_tools.py"
+            args: "-- /test_tools.py"
             expect: "Tool returned"
+            needs_echo_tool: true
           - example: nodejs
             args: "-- /app/hello.js"
             expect: "Hello from Node.js on Hyperlight"
@@ -575,11 +587,18 @@ jobs:
         shell: pwsh
         run: |
           cd host
-          cargo build --release --bin hyperlight-unikraft --bin multifn-test --bin pydriver-run --bin pyhl
+          cargo build --release --features wasm-host-fns --bin hyperlight-unikraft --bin multifn-test --bin pydriver-run --bin pyhl
           Copy-Item target\release\hyperlight-unikraft.exe $env:USERPROFILE\.cargo\bin\ -Force
           Copy-Item target\release\multifn-test.exe $env:USERPROFILE\.cargo\bin\ -Force
           Copy-Item target\release\pydriver-run.exe $env:USERPROFILE\.cargo\bin\ -Force
           Copy-Item target\release\pyhl.exe $env:USERPROFILE\.cargo\bin\ -Force
+
+      - name: Build echo Wasm host function
+        if: matrix.needs_echo_tool == true
+        shell: pwsh
+        run: |
+          rustup target add wasm32-wasip1
+          cargo build --manifest-path examples/echo-wasm-host-fxn/Cargo.toml --release --target wasm32-wasip1
 
       - name: Download prebuilt image
         uses: actions/download-artifact@v4
@@ -596,6 +615,7 @@ jobs:
           $driver = '${{ matrix.driver }}'
           $runArgs = '${{ matrix.args }}'
           $needsMount = '${{ matrix.needs_mount }}'
+          $needsEchoTool = '${{ matrix.needs_echo_tool }}'
 
           # Read memory from the example's Justfile (single source of truth).
           $memory = ''
@@ -615,6 +635,11 @@ jobs:
             # side as the guest path iff it starts with '/', so Windows
             # drive-letter colons in $mountDir are handled correctly.
             $mountArgs = @('--mount', ($mountDir + ':/host'))
+          }
+
+          $toolArgs = @()
+          if ($needsEchoTool -eq 'true') {
+            $toolArgs = @('--tool', 'echo=examples/echo-wasm-host-fxn/target/wasm32-wasip1/release/echo-wasm-host-fxn.wasm')
           }
 
           # Strict mode: expected output must appear AND the driver
@@ -643,7 +668,7 @@ jobs:
                 $memArgs = @('-m', $memory)
               }
               $out = & hyperlight-unikraft -q @memArgs `
-                $kernel --initrd $cpio @mountArgs @argList 2>&1
+                $kernel --initrd $cpio @mountArgs @toolArgs @argList 2>&1
               $rc = $LASTEXITCODE
             }
           }

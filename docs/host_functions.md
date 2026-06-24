@@ -15,7 +15,7 @@ Implementation lives in [`host/src/lib.rs`](../host/src/lib.rs). Guest-side call
 | `fs_*` tools | **Off** | `--mount HOST[:GUEST]` (repeatable) |
 | `net_*` tools | **Off** | `--net`, `--net-allow`, or `--net-block` |
 | Inbound listen | **Off** | `--port PORT` (requires network enabled) |
-| Custom tools | **Off** | `--tool NAME=WASM` with `wasm-host-fns`, `SandboxBuilder::tool()`, or legacy/demo `--enable-tools` echo |
+| Custom tools | **Off** | `--tool NAME=WASM` with `wasm-host-fns` or `SandboxBuilder::tool()` |
 
 With **no flags**, the guest cannot reach the host filesystem or network through dispatch. Only internal plumbing (`__hl_exit`, `__hl_sleep`) is wired.
 
@@ -85,7 +85,6 @@ hyperlight-unikraft KERNEL [--initrd CPIO] [options] [-- APP_ARGS...]
 | `--net-allow HOST_OR_IP` | Allow-list outbound destinations (implies `--net`). Repeatable. |
 | `--net-block HOST_OR_IP` | Block-list; all other destinations allowed (implies `--net`). Mutually exclusive with `--net-allow`. |
 | `--port PORT` | Allow `net_bind` / listen on `PORT` (implies `--net`). Without `--port`, outbound-only: bind is rejected. |
-| `--enable-tools` | Registers only the built-in `echo` demo tool. It does not load user code; prefer `--tool NAME=WASM` for CLI custom tools or `SandboxBuilder::tool()` for library users. |
 | `--tool NAME=WASM` | With the Cargo feature `wasm-host-fns`, registers `WASM` as a host-side WASIp1 custom tool named `NAME`. Repeatable. |
 | `--tool-wasi-dir HOST[:GUEST]` | Preopens a read-write host directory for every CLI Wasm tool. Default guest path is `/host`. Repeatable. |
 | `--tool-wasi-dir-ro HOST[:GUEST]` | Preopens a read-only host directory for every CLI Wasm tool. Default guest path is `/host`. Repeatable. |
@@ -200,19 +199,20 @@ Sockets are host-side (`socket2`); the guest sees opaque numeric **`fd`** handle
 
 ## Custom tools
 
-**CLI demo tool:** `--enable-tools` registers only a built-in `echo` tool that returns `args` unchanged. It is useful as a smoke test and compatibility path, but it is not the CLI extension mechanism for user-provided host functions. CLI examples should prefer a Wasm `echo.wasm` registered with `--tool echo=...`; library examples should register an echo handler with `SandboxBuilder::tool()`.
-
-**CLI Wasm tools:** build with the optional feature and pass one or more `--tool` flags:
+**CLI Wasm tools:** build with the optional feature and pass one or more `--tool` flags. The `examples/echo-wasm-host-fxn` module is a minimal echo handler used by `examples/python-tools`:
 
 ```bash
 cargo build --manifest-path host/Cargo.toml --features wasm-host-fns --bin hyperlight-unikraft
-hyperlight-unikraft kernel --initrd app.cpio --tool greet=./greet.wasm
+rustup target add wasm32-wasip1
+cargo build --manifest-path examples/echo-wasm-host-fxn/Cargo.toml --release --target wasm32-wasip1
+hyperlight-unikraft kernel --initrd app.cpio \
+    --tool echo=examples/echo-wasm-host-fxn/target/wasm32-wasip1/release/echo-wasm-host-fxn.wasm
 ```
 
 Each `--tool NAME=WASM` module is compiled and linked before VM boot, then invoked as a fresh WASIp1 command for every matching guest `__dispatch` call. The handler receives the existing dispatch request on stdin:
 
 ```json
-{"name":"NAME","args":<json_value>}
+{"name":"echo","args":<json_value>}
 ```
 
 The handler writes JSON to stdout. It may write either a raw JSON result value or the normal dispatch envelope:
