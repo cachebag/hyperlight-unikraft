@@ -7,10 +7,10 @@ on:
   push:
     branches: [main]
     paths:
-      - 'examples/**'
-      - 'runtimes/**'
-      - 'host/**'
-      - '.github/workflows/test-examples.yml'
+      - "examples/**"
+      - "runtimes/**"
+      - "host/**"
+      - ".github/workflows/test-examples.yml"
 
 # Pushing a new commit to the same ref cancels any in-flight run on
 # the previous commit — don't waste CI on stale code.
@@ -61,12 +61,14 @@ jobs:
           - python-agent-driver
           - powershell
           - networking-py
+          - go-http
+          - dotnet-http
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25.1'
+          go-version: "1.25.1"
           cache: false
 
       - name: Install just
@@ -90,7 +92,7 @@ jobs:
       - name: Build local-python-base images (python-agent-driver only)
         if: matrix.example == 'python-agent-driver'
         env:
-          DOCKER_BUILDKIT: '0'
+          DOCKER_BUILDKIT: "0"
         run: |
           docker build --target base -t local-python-base-dev:latest \
               -f runtimes/python.Dockerfile runtimes/
@@ -100,7 +102,7 @@ jobs:
       - name: Build rootfs
         working-directory: examples/${{ matrix.example }}
         env:
-          DOCKER_BUILDKIT: '0'
+          DOCKER_BUILDKIT: "0"
         run: |
           just rootfs
 
@@ -224,6 +226,14 @@ jobs:
           - example: networking-py
             args: "--port 8080 -- /echo_server_test.py"
             expect: "SUCCESS: bind\\+listen on port 8080 allowed"
+          - example: go-http
+            args: "--port 8080 -- /bin/server"
+            expect: "Hello from Hyperlight-Unikraft!"
+            http_port: "8080"
+          - example: dotnet-http
+            args: "--port 8080 -- /app/KestrelHyperlight"
+            expect: "Hello from Kestrel on Hyperlight!"
+            http_port: "8080"
     steps:
       - uses: actions/checkout@v4
 
@@ -283,7 +293,7 @@ jobs:
       - name: Build local-python-base images (python-agent-driver only)
         if: steps.kvm_check.outputs.available == 'true' && matrix.example == 'python-agent-driver'
         env:
-          DOCKER_BUILDKIT: '0'
+          DOCKER_BUILDKIT: "0"
         run: |
           docker build --target base -t local-python-base-dev:latest \
               -f runtimes/python.Dockerfile runtimes/
@@ -294,7 +304,7 @@ jobs:
         if: steps.kvm_check.outputs.available == 'true'
         working-directory: examples/${{ matrix.example }}
         env:
-          DOCKER_BUILDKIT: '0'
+          DOCKER_BUILDKIT: "0"
         run: |
           just rootfs
           kraft-hyperlight --no-prompt build --plat hyperlight --arch x86_64 || true
@@ -345,9 +355,47 @@ jobs:
             mkdir -p "$mount_dir"
             mount_args="--mount $mount_dir:/host"
           fi
+
           tool_args=""
           if [ "${{ matrix.needs_echo_tool }}" = "true" ]; then
             tool_args="--tool echo=../echo-wasm-host-fxn/target/wasm32-wasip1/release/echo-wasm-host-fxn.wasm"
+          fi
+
+          # HTTP server examples: start in background, poll, curl, kill.
+          http_port="${{ matrix.http_port }}"
+          if [ -n "$http_port" ]; then
+            mem_args=""
+            if [ -n "$memory" ]; then
+              mem_args="-m $memory"
+            fi
+            hyperlight-unikraft -q $mem_args "$kernel" --initrd "$cpio" $mount_args $tool_args ${{ matrix.args }} &
+            server_pid=$!
+            sleep 3
+            ready=0
+            for i in $(seq 1 30); do
+              if curl -s --max-time 10 "http://127.0.0.1:${http_port}" >/dev/null 2>&1; then
+                ready=1
+                break
+              fi
+              sleep 1
+            done
+            if [ "$ready" -ne 1 ]; then
+              echo "FAIL: server did not become ready within timeout"
+              kill "$server_pid" 2>/dev/null || true
+              exit 1
+            fi
+            response=$(curl -s --max-time 10 "http://127.0.0.1:${http_port}")
+            kill "$server_pid" 2>/dev/null || true
+            wait "$server_pid" 2>/dev/null || true
+            echo "=== HTTP response ==="
+            echo "$response"
+            if echo "$response" | grep -qF "$expect"; then
+              echo "PASS: matched /$expect/"
+            else
+              echo "FAIL: did not match /$expect/"
+              exit 1
+            fi
+            exit 0
           fi
           case "${{ matrix.driver }}" in
             multifn-test)
@@ -414,12 +462,14 @@ jobs:
           - python-agent-driver
           - powershell
           - networking-py
+          - go-http
+          - dotnet-http
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25.1'
+          go-version: "1.25.1"
           cache: false
 
       - name: Install just
@@ -443,7 +493,7 @@ jobs:
       - name: Build local-python-base images (python-agent-driver only)
         if: matrix.example == 'python-agent-driver'
         env:
-          DOCKER_BUILDKIT: '0'
+          DOCKER_BUILDKIT: "0"
         run: |
           docker build --target base -t local-python-base-dev:latest \
               -f runtimes/python.Dockerfile runtimes/
@@ -453,7 +503,7 @@ jobs:
       - name: Build rootfs + kernel
         working-directory: examples/${{ matrix.example }}
         env:
-          DOCKER_BUILDKIT: '0'
+          DOCKER_BUILDKIT: "0"
         run: |
           just rootfs
           kraft-hyperlight --no-prompt build --plat hyperlight --arch x86_64 || true
@@ -566,6 +616,14 @@ jobs:
           - example: networking-py
             args: "--port 8080 -- /echo_server_test.py"
             expect: "SUCCESS: bind\\+listen on port 8080 allowed"
+          - example: go-http
+            args: "--port 8080 -- /bin/server"
+            expect: "Hello from Hyperlight-Unikraft!"
+            http_port: "8080"
+          - example: dotnet-http
+            args: "--port 8080 -- /app/KestrelHyperlight"
+            expect: "Hello from Kestrel on Hyperlight!"
+            http_port: "8080"
     steps:
       - uses: actions/checkout@v4
 
@@ -646,6 +704,54 @@ jobs:
           # must exit 0. Matches Linux semantics.
           $PSNativeCommandUseErrorActionPreference = $false
           $ErrorActionPreference = 'Continue'
+
+          # HTTP server examples: start in background, poll, curl, kill.
+          $httpPort = '${{ matrix.http_port }}'
+          if ($httpPort -ne '') {
+            $argList = @()
+            if ($runArgs -ne '') {
+              $argList = $runArgs.Split(' ') | Where-Object { $_ -ne '' }
+            }
+            $memArgs = @()
+            if ($memory -ne '') {
+              $memArgs = @('-m', $memory)
+            }
+            $stderrLog = Join-Path $env:RUNNER_TEMP 'hl-stderr.log'
+            $proc = Start-Process -FilePath 'hyperlight-unikraft' `
+              -ArgumentList (@('-q') + $memArgs + @($kernel, '--initrd', $cpio) + $argList) `
+              -PassThru -NoNewWindow -RedirectStandardError $stderrLog
+            # Give the server time to boot the unikernel and start listening
+            Start-Sleep -Seconds 5
+            $ready = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              try {
+                $null = Invoke-WebRequest -Uri "http://127.0.0.1:${httpPort}" -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+                $ready = $true
+                break
+              } catch {
+                Start-Sleep -Seconds 1
+              }
+            }
+            if (-not $ready) {
+              Write-Host "FAIL: server did not become ready within timeout"
+              Write-Host "=== stderr (last 200 lines) ==="
+              Get-Content $stderrLog -Tail 200 -ErrorAction SilentlyContinue
+              Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+              exit 1
+            }
+            $raw = (Invoke-WebRequest -Uri "http://127.0.0.1:${httpPort}" -UseBasicParsing -TimeoutSec 10).Content
+            if ($raw -is [byte[]]) { $resp = [System.Text.Encoding]::UTF8.GetString($raw) } else { $resp = $raw }
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            Write-Host "=== HTTP response ==="
+            Write-Host $resp
+            if ($resp -match [regex]::Escape($expect)) {
+              Write-Host "PASS: matched /$expect/"
+              exit 0
+            } else {
+              Write-Host "FAIL: did not match /$expect/"
+              exit 1
+            }
+          }
 
           switch ($driver) {
             'multifn-test' {
@@ -842,7 +948,14 @@ jobs:
 
   test-examples-passed:
     if: always()
-    needs: [build-example, runtime-test, package-images-for-windows, runtime-test-windows, pyhl-snapshot-test]
+    needs:
+      [
+        build-example,
+        runtime-test,
+        package-images-for-windows,
+        runtime-test-windows,
+        pyhl-snapshot-test,
+      ]
     runs-on: ubuntu-latest
     permissions: {}
     steps:
